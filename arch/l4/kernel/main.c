@@ -90,6 +90,7 @@
 #ifdef CONFIG_X86
 #include <l4/sys/segment.h>
 
+#include <asm/desc.h>
 #include <asm/io.h>
 #include <asm/i8259.h>
 #include <asm/fixmap.h>
@@ -97,7 +98,7 @@
 #include <l4/rtc/rtc.h>
 #endif
 #include <asm/l4x/smp.h>
-#endif
+#endif /* X86 */
 
 L4_CV void l4x_external_exit(int);
 
@@ -138,7 +139,6 @@ L4_EXTERNAL_FUNC_AND_EXPORT(l4re_rm_reserve_area_srv);
 L4_EXTERNAL_FUNC_AND_EXPORT(l4re_rm_free_area_srv);
 
 L4_EXTERNAL_FUNC_AND_EXPORT(l4re_ma_alloc_align_srv);
-L4_EXTERNAL_FUNC_AND_EXPORT(l4re_ma_free_srv);
 
 L4_EXTERNAL_FUNC(l4io_request_iomem);
 L4_EXTERNAL_FUNC(l4io_request_iomem_region);
@@ -182,11 +182,14 @@ struct desc_ptr early_gdt_descr;
 struct desc_ptr idt_descr = { .size = IDT_ENTRIES*8-1, .address = (unsigned long)idt_table };
 #endif
 
-unsigned l4x_fiasco_gdt_entry_offset;
+unsigned l4x_x86_fiasco_gdt_entry_offset;
+unsigned l4x_x86_fiasco_user_cs;
+unsigned l4x_x86_fiasco_user_ds;
 #ifdef CONFIG_X86_64
-unsigned l4x_fiasco_user32_cs;
-unsigned l4x_fiasco_user_cs;
-unsigned l4x_fiasco_user_ds;
+unsigned l4x_x86_fiasco_user32_cs;
+#ifndef CONFIG_L4_VCPU
+struct l4x_segment_user_state_t l4x_current_user_segments[NR_CPUS];
+#endif
 #endif
 
 unsigned long l4x_fixmap_space_start;
@@ -251,6 +254,8 @@ static bool l4x_init_finished;
 
 static struct l4x_phys_virt_mem l4x_phys_virt_addrs[L4X_PHYS_VIRT_ADDRS_MAX_ITEMS] __nosavedata;
 DEFINE_SPINLOCK(l4x_v2p_lock);
+
+l4_cap_idx_t l4x_jdb_cap;
 
 #ifdef CONFIG_L4_CONFIG_CHECKS
 static const unsigned long required_kernel_abi_version = 3;
@@ -610,7 +615,7 @@ L4_CV l4_utcb_t *l4_utcb_wrap(void)
 		asm volatile ("mov %%fs:0, %0" : "=r" (v));
 		return (l4_utcb_t *)v;
 	}
-	return l4x_utcb_current(current_thread_info_stack());
+	return l4x_utcb_current();
 #else
 #error Add your arch
 #endif
@@ -753,16 +758,10 @@ int l4x_query_and_get_cow_ds(const char *name, const char *logprefix,
 out4:
 	if (*addr)
 		l4re_rm_detach(*addr);
-
 out3:
-	if (l4_is_valid_cap(*memcap))
-		l4re_ma_free(*memcap);
-
+	l4_task_delete_obj(L4RE_THIS_TASK_CAP, *memcap);
 out2:
-	if (l4_is_valid_cap(*memcap)) {
-		l4re_ma_free(*memcap);
-		l4_task_delete_obj(L4RE_THIS_TASK_CAP, *memcap);
-	}
+	l4x_cap_free(*memcap);
 out1:
 	l4_task_delete_obj(L4RE_THIS_TASK_CAP, *dscap);
 	L4XV_U(f);
@@ -780,10 +779,8 @@ int l4x_detach_and_free_ds(l4_cap_idx_t dscap, void *addr)
 		return r;
 	}
 
-	if ((r = L4XV_FN_i(l4_error(l4_task_delete_obj(L4RE_THIS_TASK_CAP,
-	                                               dscap))))) {
+	if ((r = L4XV_FN_e(l4_task_delete_obj(L4RE_THIS_TASK_CAP, dscap))))
 		LOG_printf("Failed to release/unmap cap: %d\n", r);
-	}
 
 	l4x_cap_free(dscap);
 	return 0;
@@ -800,13 +797,10 @@ int l4x_detach_and_free_cow_ds(l4_cap_idx_t memcap,
 		return r;
 	}
 
-	if ((r = L4XV_FN_i(l4re_ma_free(memcap))))
-		LOG_printf("Failed to free mem: %d\n", r);
-
-	if ((r = L4XV_FN_i(l4_error(l4_task_delete_obj(L4RE_THIS_TASK_CAP, dscap)))))
+	if ((r = L4XV_FN_e(l4_task_delete_obj(L4RE_THIS_TASK_CAP, dscap))))
 		LOG_printf("Failed to release/unmap cap: %d\n", r);
 
-	if ((r = L4XV_FN_i(l4_error(l4_task_delete_obj(L4RE_THIS_TASK_CAP, memcap)))))
+	if ((r = L4XV_FN_e(l4_task_delete_obj(L4RE_THIS_TASK_CAP, memcap))))
 		LOG_printf("Failed to release/unmap cap: %d\n", r);
 
 	l4x_cap_free(dscap);
@@ -1091,7 +1085,7 @@ static void l4x_map_below_mainmem(void)
 #ifdef CONFIG_ARM
 unsigned long upage_addr;
 
-static __init_refok void l4x_setup_upage(void)
+static __ref void l4x_setup_upage(void)
 {
 	l4re_ds_t ds;
 
@@ -1233,7 +1227,7 @@ static void __init l4x_reserve_vmalloc_space(void)
 	                         sz, flags, PGDIR_SHIFT))
 		l4x_exit_l4linux_msg("l4x: Error reserving vmalloc memory area of %ldBytes!\n", sz);
 
-	LOG_printf("l4x: vmalloc area: %08lx - %08lx\n",
+	LOG_printf("L4x: vmalloc area: %08lx - %08lx\n",
 	           l4x_vmalloc_memory_start,
 	           l4x_vmalloc_memory_start + sz);
 }
@@ -1660,7 +1654,7 @@ void l4x_load_percpu_gdt_descriptor(struct desc_struct *gdt)
 	                        &desc, 8, nr, l4_utcb())) < 0)
 		LOG_printf("GDT setting failed: %ld\n", r);
 	asm("mov %0, %%fs"
-	    : : "r" ((l4x_fiasco_gdt_entry_offset + nr) * 8 + 3) : "memory");
+	    : : "r" ((l4x_x86_fiasco_gdt_entry_offset + nr) * 8 + 3) : "memory");
 #endif
 }
 #endif
@@ -1710,7 +1704,7 @@ static __noreturn L4_CV void l4x_cpu_ipi_thread(void *x)
 	int err;
 	l4_utcb_t *utcb = l4_utcb();
 
-	l4x_prepare_irq_thread(current_thread_info_stack(), cpu);
+	l4x_prepare_irq_thread(l4x_current_stack_pointer(), cpu);
 
 	// wait until parent has setup our cap and attached us
 	while (l4_is_invalid_cap(l4x_cpu_ipi_irqs[cpu])) {
@@ -1740,7 +1734,7 @@ static __noreturn L4_CV void l4x_cpu_ipi_thread(void *x)
 
 			while (mask) {
 				vector = ffs(mask) - 1;
-				l4x_do_IPI(vector, current_thread_info_stack());
+				l4x_do_IPI(vector);
 				mask &= ~(1 << vector);
 			}
 		}
@@ -1851,15 +1845,14 @@ void l4x_cpu_ipi_stop(unsigned cpu)
 static L4_CV void __cpu_starter(void *data)
 {
 	int cpu = *(int *)data;
-	struct thread_info *ti = current_thread_info_stack();
 	l4_utcb_t *u = l4_utcb();
+
+	l4x_stack_set(l4x_current_stack_pointer(), u);
 
 #ifdef CONFIG_X86
 	load_percpu_segment(cpu);
 #endif
 
-	ti->cpu = cpu;
-	l4x_stack_set(ti, u);
 	l4x_create_ugate(l4x_cap_current_utcb(u), cpu);
 	l4lx_thread_pager_change(l4x_cap_current_utcb(u), l4x_start_thread_id);
 
@@ -1870,13 +1863,12 @@ static L4_CV void __cpu_starter(void *data)
 #endif
 
 #ifdef CONFIG_X86
-	l4x_stack_set((struct thread_info *)(stack_start & ~(THREAD_SIZE - 1)),
-	              l4_utcb());
+	l4x_stack_set(initial_stack & ~(THREAD_SIZE - 1), u);
 #ifdef CONFIG_X86_32
-	asm volatile ("mov (stack_start), %esp; jmp *(initial_code)");
+	asm volatile ("mov (initial_stack), %esp; jmp *(initial_code)");
 #endif /* X86_32 */
 #ifdef CONFIG_X86_64
-	asm volatile ("mov (stack_start), %rsp; jmp *(initial_code)");
+	asm volatile ("mov (initial_stack), %rsp; jmp *(initial_code)");
 #endif /* X86_64 */
 #endif /* X86 */
 #ifdef CONFIG_ARM
@@ -1911,8 +1903,6 @@ void l4x_cpu_spawn(int cpu, struct task_struct *idle)
 
 	l4x_printf("Launching %s on pcpu %d at %p\n",
 	           name, l4x_cpu_physmap_get_id(cpu), __cpu_starter);
-
-	task_thread_info(idle)->cpu = cpu;
 
 	/* CPU threads kill themselves, not being able to free the
 	 * cap-slot, so we need to reuse */
@@ -2016,11 +2006,6 @@ void l4x_smp_process_IPI(int vector, struct pt_regs *regs)
 	}
 }
 #endif
-
-void check_tsc_sync_source(int cpu)
-{
-	LOG_printf("%s(%d)\n", __func__, cpu);
-}
 
 void l4x_migrate_thread(l4_cap_idx_t thread, unsigned from_cpu, unsigned to_cpu)
 {
@@ -2236,19 +2221,13 @@ static void l4x_power_off(void)
 static L4_CV void __init cpu0_startup(void *data)
 {
 	l4_cap_idx_t cpu0id = l4x_cpu_thread_get_cap(0);
-	struct thread_info *ti = current_thread_info_stack();
+	struct thread_info *ti;
 
-#ifdef CONFIG_X86_64
-	l4x_fiasco_user32_cs = l4x_vcpu_ptr[0]->arch_state.user_cs32;
-	l4x_fiasco_user_cs   = l4x_vcpu_ptr[0]->arch_state.user_cs64;
-	l4x_fiasco_user_ds   = l4x_vcpu_ptr[0]->arch_state.user_ds32;
-#endif
+	l4x_stack_set(l4x_current_stack_pointer(), l4_utcb());
+
 #ifdef CONFIG_X86
 	load_percpu_segment(0);
 #endif
-
-	ti->cpu = 0;
-	l4x_stack_set(ti, l4_utcb());
 
 	l4x_create_ugate(cpu0id, 0);
 	l4lx_thread_pager_change(cpu0id, l4x_start_thread_id);
@@ -2262,8 +2241,8 @@ static L4_CV void __init cpu0_startup(void *data)
 	local_irq_disable();
 #endif
 
+	ti = current_thread_info();
 	*ti = (struct thread_info) INIT_THREAD_INFO(init_task);
-	ti->task->stack = ti;
 
 	panic_blink = l4x_blink;
 
@@ -2272,6 +2251,7 @@ static L4_CV void __init cpu0_startup(void *data)
 	legacy_pic = &null_legacy_pic;
 
 	setup_clear_cpu_cap(X86_FEATURE_SEP);
+	setup_clear_cpu_cap(X86_FEATURE_TSC_ADJUST);
 #endif
 
 	/* set our custom power off function */
@@ -2281,7 +2261,8 @@ static L4_CV void __init cpu0_startup(void *data)
 #ifdef CONFIG_X86_32
 	i386_start_kernel();
 #elif defined(CONFIG_X86_64)
-	l4x_stack_set((struct thread_info *)per_cpu(irq_stack_union.irq_stack, 0), l4_utcb());
+	l4x_stack_set((unsigned long)per_cpu(irq_stack_union.irq_stack, 0),
+	              l4_utcb());
 	x86_64_start_kernel(NULL);
 #else
 	start_kernel();
@@ -2289,7 +2270,9 @@ static L4_CV void __init cpu0_startup(void *data)
 }
 
 enum { L4X_PATH_BUF_SIZE = 200 };
+#if defined(CONFIG_BLK_DEV_INITRD) || defined(CONFIG_OF)
 static char l4x_path_buf[L4X_PATH_BUF_SIZE];
+#endif
 
 #ifdef CONFIG_BLK_DEV_INITRD
 static l4re_ds_t l4x_initrd_ds;
@@ -2353,8 +2336,7 @@ void l4x_free_initrd_mem(void)
 		return;
 	}
 
-	r = L4XV_FN_i(l4_error(l4_task_release_cap(L4_BASE_TASK_CAP,
-	                                           l4x_initrd_ds)));
+	r = L4XV_FN_e(l4_task_release_cap(L4_BASE_TASK_CAP, l4x_initrd_ds));
 	if (r) {
 		pr_err("l4x: Error releasing initrd dataspace\n");
 		return;
@@ -2650,21 +2632,95 @@ err_release_cap:
 	return r;
 }
 
-static void pagein_sect(const char *name, void *s, void *e, bool rw)
+static void print_sect(const char *name, void *s, void *e)
 {
 	unsigned long sz = (unsigned long)e - (unsigned long)s;
 
 	LOG_printf("%s %08lx - %08lx [%ldkB]\n",
 	           name, (unsigned long)s, (unsigned long)e, sz >> 10);
-
-	/* Touch areas to avoid pagefaults */
-	if (rw)
-		l4_touch_rw(s, sz);
-	else
-		l4_touch_ro(s, sz);
 }
 
-int __init_refok L4_CV main(int argc, char **argv)
+static int l4x_alloc_anon_mem_to(l4_addr_t start, l4_addr_t size)
+{
+	l4re_ds_t ds;
+	int e;
+
+	if (l4_is_invalid_cap(ds = l4re_util_cap_alloc())) {
+		LOG_printf("L4x: Cap alloc failed\n");
+		return -L4_ENOMEM;
+	}
+
+	if ((e = l4re_ma_alloc(size, ds, L4RE_MA_PINNED))) {
+		LOG_printf("L4x: Memory allocation for %ld Bytes failed.\n",
+		           size);
+		return e;
+	}
+
+	if ((e = l4re_rm_attach((void **)&start, size,
+	                        L4RE_RM_EAGER_MAP, ds | L4_CAP_FPAGE_RW,
+	                        0, L4_PAGESHIFT))) {
+		LOG_printf("L4x: Cannot attach memory: %d\n", e);
+		return e;
+	}
+
+	return 0;
+}
+
+static void l4x_fill_up_init_section(void)
+{
+	/* Due to alignments, the init section may have holes
+	 * that are not backed with memory by the ELF file we're loading.
+	 * However, the whole init-section is used, thus fill the
+	 * hole up with memory. */
+
+	l4_addr_t a = (l4_addr_t)&__init_begin;
+	l4_addr_t hole_start = ~0UL;
+
+	while (a < (l4_addr_t)&__init_end) {
+		l4re_ds_t ds;
+		l4_addr_t off, tmp = a;
+		unsigned flags;
+		unsigned long size = 1;
+
+		int e = l4re_rm_find(&tmp, &size, &off, &flags, &ds);
+		if (e == -L4_ENOENT) {
+			if (hole_start == ~0UL)
+				hole_start = a;
+
+			size = L4_PAGESIZE;
+
+		} else if (e != 0) {
+			LOG_printf("L4x: Failed with %d to query memory "
+			           "at %lx\n", e, a);
+			break;
+		} else if (hole_start != ~0UL)
+				l4x_alloc_anon_mem_to(hole_start,
+				                      a - hole_start);
+
+		a += size;
+	}
+
+	if (hole_start != ~0UL)
+		l4x_alloc_anon_mem_to(hole_start, a - hole_start);
+}
+
+#ifdef CONFIG_X86_64
+static int l4lx_amd64_get_segment_info(void)
+{
+	int r = fiasco_amd64_segment_info(l4re_env()->main_thread,
+	                                  &l4x_x86_fiasco_user_ds,
+	                                  &l4x_x86_fiasco_user_cs,
+	                                  &l4x_x86_fiasco_user32_cs,
+	                                  l4_utcb());
+	if (r)
+		LOG_printf("L4x: Failed to query segment information (%d).\n",
+		           r);
+
+	return r;
+}
+#endif /* X86_64 */
+
+int __ref L4_CV main(int argc, char **argv)
 {
 	l4lx_thread_t main_id;
 	struct l4lx_thread_start_info_t si;
@@ -2687,6 +2743,9 @@ int __init_refok L4_CV main(int argc, char **argv)
 	LOG_printf("   This is an OABI build.\n");
 #endif
 #endif
+
+	if (l4x_re_resolve_name_noctx("jdb", 3, &l4x_jdb_cap))
+		l4x_jdb_cap = L4_INVALID_CAP;
 
 	argv++;
 	p = boot_command_line;
@@ -2719,14 +2778,16 @@ int __init_refok L4_CV main(int argc, char **argv)
 	l4x_x86_utcb_save_orig_segment();
 
 	LOG_printf("Image: %08lx - %08lx [%lu KiB].\n",
-	           (unsigned long)_stext, (unsigned long)_end,
-	           (unsigned long)(_end - _stext + 1) >> 10);
+	           (unsigned long)_text, (unsigned long)_end,
+	           (unsigned long)(_end - _text + 1) >> 10);
 
-	pagein_sect("Areas: Text:    ", &_stext, &_etext, false);
-	pagein_sect("       RO-Data: ", &__start_rodata, &__end_rodata, true);
-	pagein_sect("       Data:    ", &_sdata, &_edata, true);
-	pagein_sect("       Init:    ", &__init_begin, &__init_end, false);
-	pagein_sect("       BSS:     ", &__bss_start, &__bss_stop, true);
+	print_sect("Areas: Text:    ", &_text, &_etext);
+	print_sect("       RO-Data: ", &__start_rodata, &__end_rodata);
+	print_sect("       Data:    ", &_sdata, &_edata);
+	print_sect("       Init:    ", &__init_begin, &__init_end);
+	print_sect("       BSS:     ", &__bss_start, &__bss_stop);
+
+	l4x_fill_up_init_section();
 
 	/* some things from head.S */
 	get_initial_cpu_capabilities();
@@ -2748,6 +2809,14 @@ int __init_refok L4_CV main(int argc, char **argv)
 		asm volatile("mov %%fs, %0" : "=r"(fs));
 		LOG_printf("gs=%lx   fs=%lx\n", gs, fs);
 	}
+
+	asm("mov %%cs, %0 \n"
+	    "mov %%ds, %1 \n"
+	    : "=r" (l4x_x86_fiasco_user_cs), "=r" (l4x_x86_fiasco_user_ds));
+#endif
+
+#ifdef CONFIG_X86_64
+	l4lx_amd64_get_segment_info();
 #endif
 
 	/* Init v2p list */
@@ -2773,8 +2842,11 @@ int __init_refok L4_CV main(int argc, char **argv)
 
 #ifdef CONFIG_X86
 	/* Initialize GDT entry offset */
-	l4x_fiasco_gdt_entry_offset = fiasco_gdt_get_entry_offset(l4re_env()->main_thread, l4_utcb());
-	LOG_printf("l4x_fiasco_gdt_entry_offset = %x\n", l4x_fiasco_gdt_entry_offset);
+	l4x_x86_fiasco_gdt_entry_offset
+	  = fiasco_gdt_get_entry_offset(l4re_env()->main_thread,
+	                                l4_utcb());
+	LOG_printf("l4x_x86_fiasco_gdt_entry_offset = %x\n",
+	           l4x_x86_fiasco_gdt_entry_offset);
 
 	l4x_v2p_add_item(0xa0000, (void *)0xa0000, 0xfffff - 0xa0000);
 
@@ -2822,6 +2894,8 @@ int __init_refok L4_CV main(int argc, char **argv)
 	                             "section-with-init(-data)");
 	l4x_register_pointer_section(&_sinittext, 0, 0, 1,
 	                             "section-with-init-text");
+	l4x_register_pointer_section(&_sdata, 0, 0, 1,
+	                             "data");
 
 #ifdef CONFIG_X86
 	/* Needed for smp alternatives -- nobody will ever use this for a
@@ -3059,75 +3133,6 @@ static int l4x_handle_ioport(l4_exc_regs_t *exc)
 		return 0;
 	}
 	return 1;
-}
-
-void in_kernel_int80_set_kernel(void)
-{ set_fs(KERNEL_DS); }
-
-void in_kernel_int80_set_user(void)
-{ set_fs(USER_DS); }
-
-asm(
-"in_kernel_int80_helper: \n\t"
-#ifdef CONFIG_X86_32
-"	pushl %eax	\n\t"	/* store eax */
-"	call in_kernel_int80_set_kernel \n\t"
-"	popl  %eax	\n\t"	/* restore eax */
-"	call *%eax	\n\t"	/* eax has the sys_foo function we are calling */
-"	movl %eax,24(%esp) \n\t"	/* store return value from sys_foo */
-#else
-"	push %rax	\n\t"	/* store eax */
-"	call in_kernel_int80_set_kernel \n\t"
-"	pop  %rax	\n\t"	/* restore eax */
-"	call *%rax	\n\t"	/* eax has the sys_foo function we are calling */
-"	mov %rax,24(%rsp) \n\t"	/* store return value from sys_foo */
-#endif
-"	call in_kernel_int80_set_user\n\t"
-"	call l4x_do_intra_iret\n\t"		/* return */
-);
-
-static int l4x_handle_lxsyscall(l4_exc_regs_t *exc)
-{
-	void *pc = (void *)l4_utcb_exc_pc(exc);
-	extern char in_kernel_int80_helper[];
-	unsigned long syscall;
-	struct pt_regs *regsp;
-	struct thread_info *ti;
-	const int l4x_intra_regs_size
-		= sizeof(struct pt_regs) - 2 * sizeof(unsigned long);
-
-	if (pc < (void *)_stext || pc > (void *)_etext)
-		return 1; /* Not for us */
-
-	if (exc->err != 0x402)
-		return 1; /* No int80 error code */
-
-	if (*(unsigned short *)pc != 0x80cd)
-		return 1; /* No int80 instructions */
-
-	syscall = exc->RN(ax);
-
-	if (!is_lx_syscall(syscall))
-		return 1; /* Not a valid system call number */
-
-	ti = (struct thread_info *)(exc->sp & ~(THREAD_SIZE - 1));
-	regsp = task_pt_regs(ti->task);
-
-	utcb_exc_to_ptregs(exc, regsp);
-	l4x_set_kernel_mode(regsp);
-
-	/* Set pc after int80 */
-	regsp->ip += 2;
-
-	exc->sp -= l4x_intra_regs_size;
-	memcpy((void *)exc->sp, regsp, l4x_intra_regs_size);
-
-	exc->RN(ax) = (unsigned long)sys_call_table[syscall];
-
-	/* Set PC to helper */
-	exc->ip = (unsigned long)in_kernel_int80_helper;
-
-	return 0;
 }
 
 #include <asm/perf_event.h>
@@ -3515,7 +3520,6 @@ static struct l4x_exception_func_struct l4x_exception_func_list[] = {
 #ifdef CONFIG_X86
 	{ .trap_mask = 0x2000, .for_vcpu = 1, .f = l4x_handle_hlt_for_bugs_test }, // before kprobes!
 	{ .trap_mask = 0x2000, .for_vcpu = 1, .f = l4x_handle_hlt },
-	{ .trap_mask = 0x2000, .for_vcpu = 0, .f = l4x_handle_lxsyscall },
 	{ .trap_mask = 0x0002, .for_vcpu = 0, .f = l4x_handle_int1 },
 	{ .trap_mask = 0x2000, .for_vcpu = 1, .f = l4x_handle_msr },
 	{ .trap_mask = 0x2000, .for_vcpu = 1, .f = l4x_handle_clisti },
@@ -3526,8 +3530,7 @@ static struct l4x_exception_func_struct l4x_exception_func_list[] = {
 	{ .trap_mask = 1,   .for_vcpu = 1, .f = l4x_handle_arm_undef },
 #endif
 };
-static const int l4x_exception_funcs
-	= sizeof(l4x_exception_func_list) / sizeof(l4x_exception_func_list[0]);
+static const int l4x_exception_funcs = ARRAY_SIZE(l4x_exception_func_list);
 
 static inline int l4x_handle_pagefault(unsigned long pfa, unsigned long ip,
                                        int rw)
@@ -3704,8 +3707,8 @@ void l4x_platform_shutdown(unsigned reboot)
 	/* Look for platform control capability 'pfc' */
 	e = l4x_re_resolve_name("pfc", &pfc_cap);
 	if (e || !l4_is_valid_cap(pfc_cap)) {
-		pr_info("No platform control cap 'pfc' found, "
-		        "will not shutdown/restart platform.\n");
+		pr_debug("No platform control cap 'pfc' found, "
+		         "will not shutdown/restart platform.\n");
 		l4x_exit_l4linux();
 	}
 
@@ -3808,25 +3811,23 @@ void l4x_printk_func(char *buf, int len)
 
 /* ----------------------------------------------------- */
 /* Prepare a thread for use as an IRQ thread. */
-void l4x_prepare_irq_thread(struct thread_info *ti, unsigned _cpu)
+void l4x_prepare_irq_thread(unsigned long sp, unsigned _cpu)
 {
 	/* Stack setup */
+#ifndef CONFIG_THREAD_INFO_IN_TASK
+	struct thread_info *ti;
+	ti = (struct thread_info *)(sp & ~(THREAD_SIZE - 1));
 	*ti = (struct thread_info) INIT_THREAD_INFO(init_task);
-
-	l4x_stack_set(ti, l4_utcb());
-	barrier();
-
-	ti->task          = l4x_idle_task(_cpu);
-	ti->cpu           = _cpu;
-#ifdef CONFIG_X86
-	ti->addr_limit    = MAKE_MM_SEG(0);
 #endif
+
+	l4x_stack_set(sp, l4_utcb());
+	barrier();
 
 	/* Set pager */
 	l4lx_thread_set_kernel_pager(l4x_cap_current_utcb(l4_utcb()));
 
 #if defined(CONFIG_SMP) && defined(CONFIG_X86)
-	l4x_load_percpu_gdt_descriptor(get_cpu_gdt_table(_cpu));
+	l4x_load_percpu_gdt_descriptor(get_cpu_gdt_rw(_cpu));
 #endif
 #ifdef CONFIG_ARM
 	set_my_cpu_offset(per_cpu_offset(_cpu));
@@ -3839,7 +3840,7 @@ void l4x_show_process(struct task_struct *t)
 {
 #ifdef CONFIG_L4_VCPU
 #ifdef CONFIG_X86
-	printk("%2d: %s tsk st: %lx thrd flgs: %x esp: %08lx\n",
+	printk("%2d: %s tsk st: %lx thrd flgs: %lx esp: %08lx\n",
 	       t->pid, t->comm, t->state, task_thread_info(t)->flags,
 	       t->thread.sp);
 #endif
@@ -3850,7 +3851,7 @@ void l4x_show_process(struct task_struct *t)
 #endif
 #else
 #ifdef CONFIG_X86
-	printk("%2d: %s tsk st: %lx thrd flgs: %x " PRINTF_L4TASK_FORM " esp: %08lx\n",
+	printk("%2d: %s tsk st: %lx thrd flgs: %lx " PRINTF_L4TASK_FORM " esp: %08lx\n",
 	       t->pid, t->comm, t->state, task_thread_info(t)->flags,
 	       PRINTF_L4TASK_ARG(t->thread.l4x.user_thread_id),
 	       t->thread.sp);
@@ -3986,46 +3987,6 @@ void setup_pit_timer(void)
 
 /* ----------------------------------------------------------------------- */
 /* Export list, we could also put these in a separate file (like l4_ksyms.c) */
-
-#ifdef CONFIG_X86
-#include <linux/dma-mapping.h>
-#include <linux/interrupt.h>
-
-#include <asm/checksum.h>
-#include <asm/delay.h>
-#include <asm/io.h>
-
-#ifdef CONFIG_X86_32
-EXPORT_SYMBOL(__VMALLOC_RESERVE);
-#endif
-
-EXPORT_SYMBOL(swapper_pg_dir);
-EXPORT_SYMBOL(init_thread_union);
-
-#ifdef CONFIG_X86_32
-EXPORT_SYMBOL(strstr);
-#endif
-
-EXPORT_SYMBOL(csum_partial);
-#ifdef CONFIG_X86_32
-EXPORT_SYMBOL(csum_partial_copy);
-#endif
-EXPORT_SYMBOL(empty_zero_page);
-
-#ifdef CONFIG_X86_64
-EXPORT_SYMBOL(memcpy);
-#endif
-
-/*
- * Note, this is a prototype to get at the symbol for
- * the export, but dont use it from C code, it is used
- * by assembly code and is not using C calling convention!
- */
-#ifndef CONFIG_X86_CMPXCHG64
-extern void cmpxchg8b_emu(void);
-EXPORT_SYMBOL(cmpxchg8b_emu);
-#endif
-#endif /* X86 */
 
 EXPORT_SYMBOL(l4x_vmalloc_memory_start);
 

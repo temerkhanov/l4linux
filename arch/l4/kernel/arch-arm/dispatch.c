@@ -1,6 +1,8 @@
 
 #include <linux/kernel.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/task_stack.h>
+#include <linux/sched/task.h>
 #include <linux/interrupt.h>
 #include <linux/tick.h>
 #include <linux/slab.h>
@@ -11,6 +13,7 @@
 #include <asm/uaccess.h>
 #include <asm/io.h>
 #include <asm/unistd.h>
+#include <asm/unistd-oabi.h>
 #include <asm/pgalloc.h>
 #include <asm/tls.h>
 #include <asm/opcodes.h>
@@ -340,10 +343,11 @@ static inline void utcb_to_thread_struct(l4_utcb_t *utcb,
 
 static inline void thread_struct_to_utcb(struct task_struct *p,
                                          struct thread_struct *t,
+                                         struct pt_regs *regs,
                                          l4_utcb_t *utcb,
                                          unsigned int send_size)
 {
-	ptregs_to_utcb_exc(task_pt_regs(p), l4_utcb_exc_u(utcb));
+	ptregs_to_utcb_exc(regs, l4_utcb_exc_u(utcb));
 	l4_utcb_exc_u(utcb)->tpidruro = task_thread_info(current)->tp_value[0];
 #ifndef CONFIG_L4_VCPU
 	per_cpu(utcb_snd_size, smp_processor_id()) = send_size;
@@ -553,9 +557,9 @@ static inline void dispatch_system_call(syscall_t *sctbl,
 }
 
 static unsigned
-l4x_pre_iret_work(struct pt_regs *regsp, struct task_struct *p,
-                  unsigned long syscall, syscall_t *sctbl,
-                  unsigned kernel_context)
+l4x_pre_iret_to_user_work(struct pt_regs *regsp, struct task_struct *p,
+                          unsigned long syscall, syscall_t *sctbl,
+                          unsigned kernel_context)
 {
 	unsigned long tifl;
 	unsigned was_interruptible = 0;
@@ -804,7 +808,7 @@ static inline int l4x_dispatch_exception(struct task_struct *p,
 
 		dispatch_system_call(tbl, p, scno, regs);
 
-		l4x_pre_iret_work(regs, p, scno, tbl, 0);
+		l4x_pre_iret_to_user_work(regs, p, scno, tbl, 0);
 
 		BUG_ON(p != current);
 

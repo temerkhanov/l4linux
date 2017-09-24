@@ -20,8 +20,10 @@
 
 L4_EXTERNAL_FUNC(l4vbus_get_hid);
 L4_EXTERNAL_FUNC(l4vbus_get_next_device);
+L4_EXTERNAL_FUNC(l4vbus_get_resource);
 L4_EXTERNAL_FUNC(l4re_inhibitor_acquire);
 L4_EXTERNAL_FUNC(l4re_inhibitor_release);
+L4_EXTERNAL_FUNC(l4vbus_get_device);
 
 
 static l4_cap_idx_t vbus;
@@ -35,9 +37,9 @@ struct vbus_root_data {
 };
 
 enum {
-	L4X_VBUS_INH_SUSPEND  = 0x01,
-	L4X_VBUS_INH_SHUTDOWN = 0x02,
-	L4X_VBUS_INH_WAKEUP   = 0x04,
+	L4X_VBUS_INH_SUSPEND  = 1 << 0,
+	L4X_VBUS_INH_SHUTDOWN = 1 << 1,
+	L4X_VBUS_INH_WAKEUP   = 1 << 2,
 };
 
 static void process_bus_event(struct l4x_event_stream *stream,
@@ -63,19 +65,14 @@ bus_unknown_event_stream(struct l4x_event_source *src, unsigned long id)
 	return NULL;
 }
 
-static void bus_free_event_stream(struct l4x_event_source *src,
-                                  struct l4x_event_stream *stream)
-{
-}
-
 static struct l4x_event_source_ops vbus_event_ops = {
 	.process     = process_bus_event,
 	.new_stream  = bus_unknown_event_stream,
-	.free_stream = bus_free_event_stream
 };
 
 static int vbus_root_add(struct l4x_vbus_device *device)
 {
+	int r;
 	struct vbus_root_data *d = kzalloc(sizeof(*d), GFP_KERNEL);
 	BUG_ON(device->driver_data);
 	dev_info(&device->dev, "added vbus root driver");
@@ -86,10 +83,16 @@ static int vbus_root_add(struct l4x_vbus_device *device)
 	device->driver_data = d;
 	d->inhibitor_state  = L4X_VBUS_INH_SUSPEND | L4X_VBUS_INH_SHUTDOWN;
 
-	L4XV_FN_i(l4re_inhibitor_acquire(vbus, L4VBUS_INHIBITOR_SUSPEND,
-	                                 "vbus drivers running"));
-	L4XV_FN_i(l4re_inhibitor_acquire(vbus, L4VBUS_INHIBITOR_SHUTDOWN,
-	                                 "vbus drivers running"));
+	r = L4XV_FN_i(l4re_inhibitor_acquire(vbus, L4VBUS_INHIBITOR_SUSPEND,
+	                                     "vbus drivers running"));
+	if (r < 0)
+		pr_info("L4x: Failed to acquire 'suspend' inhibitor.\n");
+
+	r = L4XV_FN_i(l4re_inhibitor_acquire(vbus, L4VBUS_INHIBITOR_SHUTDOWN,
+	                                     "vbus drivers running"));
+	if (r < 0)
+		pr_info("L4x: Failed to acquire 'shutdown' inhibitor.\n");
+
 
 	/* l4-vbus events are wakeups per default */
 	device_init_wakeup(&device->dev, true);
@@ -98,17 +101,24 @@ static int vbus_root_add(struct l4x_vbus_device *device)
 
 static void vbus_root_shutdown(struct l4x_vbus_device *device)
 {
+	int r = 0;
 	struct vbus_root_data *d = device->driver_data;
 	if (!d)
 		return;
 
-	if (d->inhibitor_state | L4X_VBUS_INH_SUSPEND)
-		L4XV_FN_i(l4re_inhibitor_release(vbus, L4VBUS_INHIBITOR_SUSPEND));
-	if (d->inhibitor_state | L4X_VBUS_INH_SHUTDOWN)
-		L4XV_FN_i(l4re_inhibitor_release(vbus, L4VBUS_INHIBITOR_SHUTDOWN));
-	if (d->inhibitor_state | L4X_VBUS_INH_WAKEUP)
-		L4XV_FN_i(l4re_inhibitor_release(vbus, L4VBUS_INHIBITOR_WAKEUP));
+	if (d->inhibitor_state & L4X_VBUS_INH_SUSPEND)
+		r |= L4XV_FN_i(l4re_inhibitor_release(vbus,
+		               L4VBUS_INHIBITOR_SUSPEND));
+	if (d->inhibitor_state & L4X_VBUS_INH_SHUTDOWN)
+		r |= L4XV_FN_i(l4re_inhibitor_release(vbus,
+		               L4VBUS_INHIBITOR_SHUTDOWN));
+	if (d->inhibitor_state & L4X_VBUS_INH_WAKEUP)
+		r |= L4XV_FN_i(l4re_inhibitor_release(vbus,
+		               L4VBUS_INHIBITOR_WAKEUP));
 	d->inhibitor_state = 0;
+
+	if (r)
+		pr_info("L4x: Failed to release inhibitor(s).\n");
 }
 
 static int vbus_root_remove(struct l4x_vbus_device *device)
@@ -158,10 +168,13 @@ static int vbus_root_suspend_noirq(struct device *dev)
 {
 	struct l4x_vbus_device *device = l4x_vbus_device_from_device(dev);
 	struct vbus_root_data *d = device->driver_data;
+	int r;
 
 	d->inhibitor_state |= L4X_VBUS_INH_WAKEUP;
-	L4XV_FN_i(l4re_inhibitor_acquire(vbus, L4VBUS_INHIBITOR_WAKEUP,
-	                                 "want wakeup from vbus"));
+	r = L4XV_FN_i(l4re_inhibitor_acquire(vbus, L4VBUS_INHIBITOR_WAKEUP,
+	                                     "want wakeup from vbus"));
+	if (r < 0)
+		pr_info("L4x: Failed to acquire 'wakup' inhibitor.\n");
 	if (d->inhibitor_state & L4X_VBUS_INH_SUSPEND) {
 		d->inhibitor_state &= ~L4X_VBUS_INH_SUSPEND;
 		/* releasing the suspend inhibitor may immediately send the
@@ -169,7 +182,10 @@ static int vbus_root_suspend_noirq(struct device *dev)
 		 * suspended internally, however this is ok since all hardware
 		 * devices should already be suspended correctly.
 		 */
-		L4XV_FN_i(l4re_inhibitor_release(vbus, L4VBUS_INHIBITOR_SUSPEND));
+		r = L4XV_FN_i(l4re_inhibitor_release(vbus,
+		                                     L4VBUS_INHIBITOR_SUSPEND));
+		if (r < 0)
+			pr_info("L4x: Failed to release 'suspend' inhibitor.\n");
 	}
 	return 0;
 }
@@ -178,12 +194,17 @@ static int vbus_root_resume_noirq(struct device *dev)
 {
 	struct l4x_vbus_device *device = l4x_vbus_device_from_device(dev);
 	struct vbus_root_data *d = device->driver_data;
+	int r;
 
-	L4XV_FN_i(l4re_inhibitor_acquire(vbus, L4VBUS_INHIBITOR_SUSPEND,
-		                         "vbus drivers running"));
+	r = L4XV_FN_i(l4re_inhibitor_acquire(vbus, L4VBUS_INHIBITOR_SUSPEND,
+	                                     "vbus drivers running"));
+	if (r < 0)
+		pr_info("L4x: Failed to acquire 'suspend' inhibitor.\n");
 	d->inhibitor_state |= L4X_VBUS_INH_SUSPEND;
 
-	L4XV_FN_i(l4re_inhibitor_release(vbus, L4VBUS_INHIBITOR_WAKEUP));
+	r = L4XV_FN_i(l4re_inhibitor_release(vbus, L4VBUS_INHIBITOR_WAKEUP));
+	if (r < 0)
+		pr_info("L4x: Failed to release 'wakeup' inhibitor.\n");
 	d->inhibitor_state &= ~L4X_VBUS_INH_WAKEUP;
 	return 0;
 }
@@ -318,13 +339,17 @@ static int create_vbus_device(struct device *parent,
                               struct l4x_vbus_device **rdev)
 {
 	int err;
+	unsigned i;
 	struct l4x_vbus_device *dev;
+	l4vbus_device_t devinfo;
 
 	dev = kzalloc(sizeof(struct l4x_vbus_device), GFP_KERNEL);
 	if (!dev) {
 		pr_err("l4vbus: cannot allocate device\n");
 		return -ENOMEM;
 	}
+
+	INIT_LIST_HEAD(&dev->resources);
 
 	dev->vbus_handle = handle;
 	dev->dev.parent = parent;
@@ -340,6 +365,73 @@ static int create_vbus_device(struct device *parent,
 		dev->hid[sizeof(dev->hid) - 1] = 0;
 
 	dev_set_name(&dev->dev, "%s:%s:%lx", dev->hid, name, handle);
+
+	/* get all device resources */
+	err = L4XV_FN_i(l4vbus_get_device(vbus, handle, &devinfo));
+	if (err < 0) {
+		dev_err(&dev->dev, "getting device info: %d\n", err);
+		return err;
+	}
+
+	for (i = 0; i < devinfo.num_resources; ++i) {
+		struct l4x_vbus_resource *vbus_res;
+		l4vbus_resource_t res;
+		char *n;
+		err = L4XV_FN_i(l4vbus_get_resource(vbus, handle, i, &res));
+		if (err < 0) {
+			dev_warn(&dev->dev, "could not request resource\n");
+			continue;
+		}
+
+		vbus_res = kzalloc(sizeof(struct l4x_vbus_resource),
+		                   GFP_KERNEL);
+		if (!vbus_res) {
+			err = -ENOMEM;
+			break;
+		}
+
+		n = kmalloc(sizeof(res.id) + 1, GFP_KERNEL);
+		if (n) {
+			strncpy(n, (char *)&res.id, sizeof(res.id));
+			n[sizeof(res.id)] = '\0';
+			vbus_res->res.name = n;
+		}
+
+		vbus_res->res.start = res.start;
+		vbus_res->res.end = res.end;
+
+		switch (res.type) {
+			case L4VBUS_RESOURCE_MEM:
+				vbus_res->res.flags = IORESOURCE_MEM;
+				break;
+			case L4VBUS_RESOURCE_PORT:
+				vbus_res->res.flags = IORESOURCE_IO;
+				break;
+			case L4VBUS_RESOURCE_IRQ:
+				vbus_res->res.flags = IORESOURCE_IRQ;
+				break;
+			case L4VBUS_RESOURCE_BUS:
+				vbus_res->res.flags = IORESOURCE_BUS;
+				break;
+			case L4VBUS_RESOURCE_GPIO:
+			case L4VBUS_RESOURCE_DMA_DOMAIN:
+				/* ignore these resource types without warning
+				 * because they don't have a matching counter
+				 * part in Linux anyways */
+				break;
+			default:
+				dev_warn(&dev->dev, "unknown resource type, "
+					 "ignoring\n");
+				break;
+		}
+
+		list_add_tail(&vbus_res->list, &dev->resources);
+	}
+
+	if (err < 0) {
+		dev_err(&dev->dev, "getting device resources: %d\n", err);
+		return err;
+	}
 
 	if ((err = device_register(&dev->dev)) < 0) {
 		pr_err("l4vbus: cannot register device\n");
@@ -370,6 +462,33 @@ static int vbus_scan(struct device *parent, l4vbus_device_handle_t parent_hdl)
 	}
 	return 0;
 }
+
+/**
+ * Get a device resource of a specific resource type
+ *
+ * @param dev   Device to get the resource from.
+ * @param type  The requested resource type.
+ * @param num   Resource number, counting starts at 0.
+ *
+ * @retval != NULL  Pointer to the device resource.
+ * @retval NULL     No resource found.
+ */
+struct resource *
+l4x_vbus_device_get_resource(struct l4x_vbus_device *dev,
+                             unsigned long type, unsigned num)
+{
+	struct l4x_vbus_resource *vbus_res;
+	struct resource *res;
+
+	list_for_each_entry(vbus_res, &dev->resources, list) {
+		res = &vbus_res->res;
+		if (resource_type(res) == type && num-- == 0)
+			return res;
+	}
+
+	return NULL;
+}
+EXPORT_SYMBOL(l4x_vbus_device_get_resource);
 
 static void l4lx_initiate_suspend(struct work_struct *work)
 {

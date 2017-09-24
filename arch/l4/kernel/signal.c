@@ -1,5 +1,5 @@
-#include <linux/sched.h>
-#include <linux/signal.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/task_stack.h>
 #include <linux/spinlock.h>
 
 #include <asm/api/macros.h>

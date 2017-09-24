@@ -177,15 +177,6 @@ l4x_copy_from_user(void *to, const void __user *from, unsigned long n)
 }
 EXPORT_SYMBOL(l4x_copy_from_user);
 
-#ifdef CONFIG_X86
-unsigned long
-__copy_from_user_ll_nozero(void *to, const void __user *from, unsigned long n)
-{
-	return copy_from_user(to, from, n);
-}
-EXPORT_SYMBOL(__copy_from_user_ll_nozero);
-#endif
-
 static inline int __clear_user_page(void * address, unsigned long n)
 {
 	unsigned long page, offset, flags;
@@ -206,7 +197,7 @@ static inline int __clear_user_page(void * address, unsigned long n)
 	return -EFAULT;
 }
 
-unsigned long l4x_clear_user(void *address, unsigned long n)
+unsigned long l4x_clear_user(void __user *address, unsigned long n)
 {
 	unsigned long clear_size = (unsigned long)address & ~PAGE_MASK;
 
@@ -485,9 +476,10 @@ long __copy_user_nocache(void *dst, const void __user *src,
 	WARN_ON(zerorest);
 	return l4x_copy_from_user(dst, src, size);
 }
+EXPORT_SYMBOL(__copy_user_nocache);
 
-#ifdef CONFIG_IA32_EMULATION
-int __copy_in_user(void __user *dst, const void __user *src, unsigned size)
+long raw_copy_in_user(void __user *dst, const void __user *src,
+                      unsigned long size)
 {
 	unsigned long src_page, src_offs = 0;
 	unsigned long dst_page, dst_offs = 0;
@@ -534,18 +526,5 @@ int __copy_in_user(void __user *dst, const void __user *src, unsigned size)
 	local_irq_restore(flags);
 	return 0;
 }
-
-EXPORT_SYMBOL(__copy_in_user);
-
-unsigned long
-copy_in_user(void __user *to, const void __user *from, unsigned len)
-{
-	if (access_ok(VERIFY_WRITE, to, len)
-	    && access_ok(VERIFY_READ, from, len))
-		return __copy_in_user(to, from, len);
-	return len;
-}
-EXPORT_SYMBOL(copy_in_user);
-
-#endif /* IA32_EMULATION */
+EXPORT_SYMBOL(raw_copy_in_user);
 #endif /* X86_64 */

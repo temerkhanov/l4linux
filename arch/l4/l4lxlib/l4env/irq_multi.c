@@ -162,7 +162,7 @@ wait_for_irq_message(unsigned cpu, unsigned int irq_to_ack)
 				    && irq_disable_cmd_state[irq]) {
 				}
 			} else if (cmd == CMD_IRQ_UPDATE) {
-				l4x_prepare_irq_thread(current_thread_info(),
+				l4x_prepare_irq_thread(l4x_current_stack_pointer(),
 				                       get_irq_cpu(irq));
 			} else
 				LOG_printf("Unknown cmd: %u %lu\n", cmd, irq_state[irq]);
@@ -178,15 +178,14 @@ static L4_CV void irq_thread(void *data)
 {
 	unsigned cpu = *(unsigned *)data;
 	unsigned int irq = 0;
-	struct thread_info *ctx = current_thread_info();
 
-	l4x_prepare_irq_thread(ctx, 0);
+	l4x_prepare_irq_thread(l4x_current_stack_pointer(), 0);
 
 	d_printk("%s: Starting IRQ thread on CPU %d\n", __func__, cpu);
 
 	for (;;) {
 		irq = wait_for_irq_message(cpu, irq);
-		l4x_do_IRQ(irq, ctx);
+		l4x_do_IRQ(irq);
 	}
 } /* irq_thread */
 
@@ -229,9 +228,6 @@ unsigned int l4lx_irq_icu_startup(struct irq_data *data)
 	}
 
 	l4lx_irq_dev_enable(data);
-	return 0;
-err:
-	l4x_cap_free(irq_caps[irq]);
 	return 0;
 }
 

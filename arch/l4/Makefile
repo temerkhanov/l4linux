@@ -62,8 +62,6 @@ export BASEARCH L4_MK_ARCH L4_MK_API OBJCOPYARCH VMLINUZ_SUFFIX
 
 BASEENV		:= l4env
 
-OBJCOPYFLAGS    := -O $(OBJCOPYARCH) -R .comment -S
-
 L4_MK_API	:= l4$(L4API)
 
 # overwrite UTS_MACHINE to get proper architecture in user land
@@ -105,8 +103,10 @@ ifeq ($(CONFIG_X86_32),y)
         # with nonstandard options
         KBUILD_CFLAGS += -fno-pic
 
-        # prevent gcc from keeping the stack 16 byte aligned
-        KBUILD_CFLAGS += $(call cc-option,-mpreferred-stack-boundary=2)
+        # Align the stack to the register width instead of using the default
+        # alignment of 16 bytes. This reduces stack usage and the number of
+        # alignment instructions.
+        KBUILD_CFLAGS += $(call cc-option,$(cc_stack_align_opt)=2)
 
         # Disable unit-at-a-time mode on pre-gcc-4.0 compilers, it makes gcc use
         # a lot more stack due to the lack of sharing of stacklots:
@@ -129,17 +129,23 @@ else
         KBUILD_CFLAGS += -m64
 
         # Align jump targets to 1 byte, not the default 16 bytes:
-        KBUILD_CFLAGS += -falign-jumps=1
+        KBUILD_CFLAGS += $(call cc-option,-falign-jumps=1)
 
         # Pack loops tightly as well:
-        KBUILD_CFLAGS += -falign-loops=1
+        KBUILD_CFLAGS += $(call cc-option,-falign-loops=1)
 
         # Don't autogenerate traditional x87 instructions
         KBUILD_CFLAGS += $(call cc-option,-mno-80387)
         KBUILD_CFLAGS += $(call cc-option,-mno-fp-ret-in-387)
 
-	# Use -mpreferred-stack-boundary=3 if supported.
-	KBUILD_CFLAGS += $(call cc-option,-mpreferred-stack-boundary=3)
+        # By default gcc and clang use a stack alignment of 16 bytes for x86.
+        # However the standard kernel entry on x86-64 leaves the stack on an
+        # 8-byte boundary. If the compiler isn't informed about the actual
+        # alignment it will generate extra alignment instructions for the
+        # default alignment which keep the stack *mis*aligned.
+        # Furthermore an alignment to the register width reduces stack usage
+        # and the number of alignment instructions.
+        KBUILD_CFLAGS += $(call cc-option,$(cc_stack_align_opt)=3)
 
 	# Use -mskip-rax-setup if supported.
 	KBUILD_CFLAGS += $(call cc-option,-mskip-rax-setup)
@@ -161,18 +167,6 @@ else
         # -funit-at-a-time shrinks the kernel .text considerably
         # unfortunately it makes reading oopses harder.
         KBUILD_CFLAGS += $(call cc-option,-funit-at-a-time)
-
-        # this works around some issues with generating unwind tables in older gccs
-        # newer gccs do it by default
-        KBUILD_CFLAGS += $(call cc-option,-maccumulate-outgoing-args)
-endif
-
-# Make sure compiler does not have buggy stack-protector support.
-ifdef CONFIG_CC_STACKPROTECTOR
-	cc_has_sp := $(srctree)/scripts/gcc-x86_$(BITS)-has-stack-protector.sh
-        ifneq ($(shell $(CONFIG_SHELL) $(cc_has_sp) $(CC) $(KBUILD_CPPFLAGS) $(biarch)),y)
-                $(warning stack-protector enabled but compiler support broken)
-        endif
 endif
 
 ifdef CONFIG_X86_X32
@@ -196,6 +190,48 @@ ifeq ($(CONFIG_KMEMCHECK),y)
 	KBUILD_CFLAGS += $(call cc-option,-fno-builtin-memcpy)
 endif
 
+ifneq ($(CONFIG_X86),)
+#
+# If the function graph tracer is used with mcount instead of fentry,
+# '-maccumulate-outgoing-args' is needed to prevent a GCC bug
+# (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=42109)
+#
+ifdef CONFIG_FUNCTION_GRAPH_TRACER
+  ifndef CONFIG_HAVE_FENTRY
+	ACCUMULATE_OUTGOING_ARGS := 1
+  else
+    ifeq ($(call cc-option-yn, -mfentry), n)
+	ACCUMULATE_OUTGOING_ARGS := 1
+
+	# GCC ignores '-maccumulate-outgoing-args' when used with '-Os'.
+	# If '-Os' is enabled, disable it and print a warning.
+        ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
+          undefine CONFIG_CC_OPTIMIZE_FOR_SIZE
+          $(warning Disabling CONFIG_CC_OPTIMIZE_FOR_SIZE.  Your compiler does not have -mfentry so you cannot optimize for size with CONFIG_FUNCTION_GRAPH_TRACER.)
+        endif
+
+    endif
+  endif
+endif
+
+#
+# Jump labels need '-maccumulate-outgoing-args' for gcc < 4.5.2 to prevent a
+# GCC bug (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=46226).  There's no way
+# to test for this bug at compile-time because the test case needs to execute,
+# which is a no-go for cross compilers.  So check the GCC version instead.
+#
+ifdef CONFIG_JUMP_LABEL
+  ifneq ($(ACCUMULATE_OUTGOING_ARGS), 1)
+	ACCUMULATE_OUTGOING_ARGS = $(call cc-if-fullversion, -lt, 040502, 1)
+  endif
+endif
+
+ifeq ($(ACCUMULATE_OUTGOING_ARGS), 1)
+	# This compiler flag is not supported by Clang:
+	KBUILD_CFLAGS += $(call cc-option,-maccumulate-outgoing-args,)
+endif
+endif
+
 # Stackpointer is addressed different for 32 bit and 64 bit x86
 sp-$(CONFIG_X86_32) := esp
 sp-$(CONFIG_X86_64) := rsp
@@ -212,11 +248,12 @@ asinstr += $(call as-instr,pshufb %xmm0$(comma)%xmm0,-DCONFIG_AS_SSSE3=1)
 asinstr += $(call as-instr,crc32l %eax$(comma)%eax,-DCONFIG_AS_CRC32=1)
 avx_instr := $(call as-instr,vxorps %ymm0$(comma)%ymm1$(comma)%ymm2,-DCONFIG_AS_AVX=1)
 avx2_instr :=$(call as-instr,vpbroadcastb %xmm0$(comma)%ymm1,-DCONFIG_AS_AVX2=1)
+avx512_instr :=$(call as-instr,vpmovm2b %k1$(comma)%zmm5,-DCONFIG_AS_AVX512=1)
 sha1_ni_instr :=$(call as-instr,sha1msg1 %xmm0$(comma)%xmm1,-DCONFIG_AS_SHA1_NI=1)
 sha256_ni_instr :=$(call as-instr,sha256msg1 %xmm0$(comma)%xmm1,-DCONFIG_AS_SHA256_NI=1)
 
-KBUILD_AFLAGS += $(cfi) $(cfi-sigframe) $(cfi-sections) $(asinstr) $(avx_instr) $(avx2_instr) $(sha1_ni_instr) $(sha256_ni_instr)
-KBUILD_CFLAGS += $(cfi) $(cfi-sigframe) $(cfi-sections) $(asinstr) $(avx_instr) $(avx2_instr) $(sha1_ni_instr) $(sha256_ni_instr)
+KBUILD_AFLAGS += $(cfi) $(cfi-sigframe) $(cfi-sections) $(asinstr) $(avx_instr) $(avx2_instr) $(avx512_instr) $(sha1_ni_instr) $(sha256_ni_instr)
+KBUILD_CFLAGS += $(cfi) $(cfi-sigframe) $(cfi-sections) $(asinstr) $(avx_instr) $(avx2_instr) $(avx512_instr) $(sha1_ni_instr) $(sha256_ni_instr)
 
 LDFLAGS := -m elf_$(UTS_MACHINE)
 
@@ -357,6 +394,7 @@ head-y := arch/l4/kernel/head.o
 libs-y				+= arch/l4/lib/arch-$(BASEARCH)/	\
 				   arch/l4/l4lxlib/generic/		\
 				   arch/l4/l4lxlib/$(BASEENV)/
+libs-$(CONFIG_L4_SERVER)	+= arch/l4/server/
 
 drivers-y			+= arch/l4/drivers/
 drivers-$(CONFIG_PCI)		+= arch/l4/pci/
@@ -391,7 +429,10 @@ $(info  L4_REQUIRED_MODS: $(L4_REQUIRED_MODS))
 $(error Aborting.)
 endif
 
-libs-y				+= -Bstatic $(L4_LIBDIRS) -ll4sys -ll4sys-direct -lgcc-l4
+libs-y += $(L4OBJ)/lib/$(L4_SYSTEM)/l4f/libl4sys.a \
+          $(L4OBJ)/lib/$(L4_SYSTEM)/l4f/libl4sys-direct.a \
+          $(L4OBJ)/lib/$(L4_SYSTEM)/l4f/libgcc-l4.a
+
 export L4INC L4_REQUIRED_MODS
 
 LDFLAGS_vmlinux  =  \
@@ -400,22 +441,22 @@ LDFLAGS_vmlinux  =  \
   --defsym __l4sys_debugger_direct=$(L4_BID_KIP_ADDR)+$(L4_BID_KIP_OFFS_SYS_DEBUGGER)
 
 ifeq ($(CONFIG_HAVE_FUNCTION_TRACER),y)
-KBUILD_CPPFLAGS += -Iarch/$(LINSRCARCH)/include/asm/trace
+KBUILD_CPPFLAGS += -I$(objtree)/arch/$(LINSRCARCH)/include/asm/trace
 endif
 
-KBUILD_CPPFLAGS	+= -Iarch/l4/include/asm/l4-arch \
-		   -Iarch/$(LINSRCARCH)/include/generated \
-		   -Iarch/$(LINSRCARCH)/include/generated/uapi \
-		   $(if $(PLATFORMNAME),-I$(src)/arch/l4/include/asm/mach-$(LINSRCARCH)/$(PLATFORMNAME)) \
-		   $(if $(PLATFORMNAME),-I$(src)/arch/l4/include/asm/plat-$(LINSRCARCH)/$(PLATFORMNAME)) \
-		   -I$(src)/arch/$(LINSRCARCH)/include \
-		   -Iarch/l4/include/asm/arch-$(LINSRCARCH) \
-		   -Iarch/l4/include/asm/orig-arch \
-                   -Iarch/l4/include \
-		   -I$(src)/arch/$(LINSRCARCH)/include/uapi \
+KBUILD_CPPFLAGS += -I$(objtree)/arch/l4/include/asm/l4-arch \
+                   -I$(objtree)/arch/$(LINSRCARCH)/include/generated \
+                   -I$(objtree)/arch/$(LINSRCARCH)/include/generated/uapi \
+                   $(if $(PLATFORMNAME),-I$(src)/arch/l4/include/asm/mach-$(LINSRCARCH)/$(PLATFORMNAME)) \
+                   $(if $(PLATFORMNAME),-I$(src)/arch/l4/include/asm/plat-$(LINSRCARCH)/$(PLATFORMNAME)) \
+                   -I$(src)/arch/$(LINSRCARCH)/include \
+                   -I$(srctree)/arch/l4/include/asm/arch-$(LINSRCARCH) \
+                   -I$(objtree)/arch/l4/include/asm/orig-arch \
+                   -I$(objtree)/arch/l4/include \
+                   -I$(src)/arch/$(LINSRCARCH)/include/uapi \
                    $(L4INC) $(L4_EXT_CFLAGS) \
-		   $(CPPFLAGS_SYSENTER-y) \
-		   $(L4BID_CPPFLAGS_SYSCALLS-y)
+                   $(CPPFLAGS_SYSENTER-y) \
+                   $(L4BID_CPPFLAGS_SYSCALLS-y)
 
 
 # for DICE
@@ -424,7 +465,7 @@ KBUILD_CPPFLAGS	+= -DL4API_$(L4_MK_API)
 KBUILD_CPPFLAGS += -DL4SYS_USE_UTCB_WRAP=1
 
 ifneq ($(CONFIG_L4_ARCH_ARM),)
-KBUILD_CPPFLAGS += -DTEXT_OFFSET=0x02000000
+KBUILD_CPPFLAGS += -DTEXT_OFFSET=0x0200000
 endif
 
 # Build the DT binary blobs if we have OF configured
@@ -432,12 +473,11 @@ ifeq ($(CONFIG_USE_OF),y)
 KBUILD_DTBS := dtbs
 endif
 
-
 all: lImage $(KBUILD_DTBS)
 
 boot := arch/l4/boot
 
-lImage: check_for_l4defs $(if $(CONFIG_L4_SERVER),server) vmlinux
+lImage: check_for_l4defs vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $@
 
 check_for_l4defs:
@@ -447,10 +487,7 @@ check_for_l4defs:
 	  exit 1; \
 	fi
 
-server:
-	$(Q)$(MAKE) $(build)=arch/l4/server
-
-PHONY += server check_for_l4defs
+PHONY += check_for_l4defs
 
 mtags:
 	(cd $(srctree) && $(MAKE) tags > /dev/null 2>&1; \
@@ -486,19 +523,10 @@ arch/l4/include/asm/orig-arch/asm-$(LINSRCARCH):
 	$(Q)mkdir -p $(@D)
 	$(Q)ln -s $(if $(KBUILD_SRC),../../../../../source/arch,../../../..)/$(LINSRCARCH)/include/asm $@
 
-include/generated/mach-types.h: $(srctree)/arch/arm/tools/gen-mach-types $(srctree)/arch/arm/tools/mach-types
-	$(Q)cp $(srctree)/arch/arm/tools/mach-types arch/l4/include/asm/mach-types.list
-	$(Q)echo -e "\nl4	MACH_L4	L4	9999" >> arch/l4/include/asm/mach-types.list
-	$(Q)$(AWK) -f $< arch/l4/include/asm/mach-types.list > $@ || { rm -f $@; /bin/false; }
-	$(Q)rm -f arch/l4/include/asm/mach-types.list
-
-symlink_files_arm  = include/generated/mach-types.h
-
 symlink_files      = arch/l4/include/asm/api \
                      arch/l4/include/asm/l4lxapi/impl \
 		     arch/l4/include/asm/l4x \
-		     arch/l4/include/asm/l4-arch/asm \
-                     $(symlink_files_$(BASEARCH))
+		     arch/l4/include/asm/l4-arch/asm
 
 symlink_dirs       = arch/l4/include/asm/orig-arch/asm-$(LINSRCARCH)
 
@@ -514,6 +542,14 @@ $(objtree)/Makeconf.l4conf: $(srctree)/arch/l4/Makefile.l4conf $(srctree)/arch/l
 
 archprepare: print_instructions check_linux_config $(symlink_files) $(symlink_dirs) \
              $(objtree)/Makeconf.l4conf
+ifeq ($(BASEARCH),arm)
+	$(Q)$(MAKE) $(build)=arch/arm/tools kapi
+	$(Q)cp $(srctree)/arch/arm/tools/mach-types .tmp.mach-types.list
+	$(Q)echo "l4	MACH_L4	L4	9999" >> .tmp.mach-types.list
+	$(Q)$(AWK) -f $(srctree)/arch/arm/tools/gen-mach-types .tmp.mach-types.list > .tmp.mach-types.h || { rm -f $@; /bin/false; }
+	$(Q)cmp -s .tmp.mach-types.h arch/l4/include/generated/asm/mach-types.h || mv .tmp.mach-types.h arch/l4/include/generated/asm/mach-types.h
+	$(Q)rm -f .tmp.mach-types.list .tmp.mach-types.h
+endif
 	$(Q)mkdir -p arch/$(BASEARCH)/lib
 ifeq ($(CONFIG_KEXEC_FILE),y)
 	$(Q)$(MAKE) $(build)=arch/x86/purgatory arch/x86/purgatory/kexec-purgatory.c
@@ -540,8 +576,13 @@ archheaders:
 	$(Q)$(MAKE) $(build)=arch/x86/entry/syscalls all
 endif
 
+ifeq ($(BASEARCH),arm)
+archheaders:
+	$(Q)$(MAKE) $(build)=arch/arm/tools uapi
+endif
+
 chkl4conf:
-	@if [ -d $(L4OBJ)/pkg/l4sys ]; then                                  \
+	@if [ -d $(L4OBJ)/pkg/l4re-core/l4sys ]; then                        \
 		echo "Configuration looks Ok.";                              \
 	else                                                                 \
 		echo \"$(L4OBJ)\" does not look like an L4 build directory!; \
@@ -554,14 +595,13 @@ chkl4conf:
 # M486 M586 M586TSC M586MMX: cmpxchg64 emulation uses cli
 
 DIS_OPTS-x86-32 := HPET_TIMER X86_X32
-DIS_OPTS-arm-32 := PERF_EVENTS ARM_PATCH_PHYS_VIRT HIGHMEM \
-                   DEBUG_RODATA DEBUG_ALIGN_RODATA
+DIS_OPTS-arm-32 := PERF_EVENTS ARM_PATCH_PHYS_VIRT HIGHMEM
 DIS_OPTS := HIGHMEM4G HIGHMEM64G PCI_GOANY PCI_GOBIOS \
             X86_MCE X86_MCE MTRR PARAVIRT KEXEC MCA SOFTWARE_SUSPEND APM \
 	    CPU_FREQ VM86 X86_DS X86_PTRACE_BTS HT_IRQ DMI \
 	    TRANSPARENT_HUGEPAGE COMPACTION X86_PAE ACPI X86_SMAP \
 	    M486 M586 M586TSC M586MMX PNP \
-	    X86_16BIT MICROCODE \
+	    X86_16BIT MICROCODE SCHED_MC_PRIO DOUBLEFAULT \
 	    $(DIS_OPTS-$(BASEARCH)-$(BITS))
 ENA_OPTS := $(ENA_OPTS-$(BASEARCH))
 

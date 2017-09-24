@@ -4,6 +4,8 @@
 #include <linux/compiler.h>
 #include <l4/sys/types.h>
 
+extern l4_cap_idx_t l4x_jdb_cap;
+
 #ifdef CONFIG_L4_DEBUG_REGISTER_NAMES
 __printf(3, 4)
 void

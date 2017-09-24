@@ -54,7 +54,7 @@ static u32 noop_safe_apic_wait_icr_idle(void)
 	return 0;
 }
 
-static struct apic l4x_apic =  {
+static struct apic l4x_apic __ro_after_init =  {
 	.name				= "l4x-apic",
 	.apic_id_valid			= default_apic_id_valid,
 
@@ -64,9 +64,7 @@ static struct apic l4x_apic =  {
 	.phys_pkg_id			= apicid_phys_pkg_id,
 	.vector_allocation_domain	= default_vector_allocation_domain,
 
-	.apic_id_mask			= 0xFFu << 24,
-
-	.cpu_mask_to_apicid_and		= default_cpu_mask_to_apicid_and,
+	.cpu_mask_to_apicid		= default_cpu_mask_to_apicid,
 
 	.wait_icr_idle			= noop_apic_wait_icr_idle,
 	.safe_wait_icr_idle		= noop_safe_apic_wait_icr_idle,

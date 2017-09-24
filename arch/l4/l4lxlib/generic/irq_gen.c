@@ -80,7 +80,7 @@ int l4lx_irq_set_type(struct irq_data *data, unsigned int type)
 	    || l4_is_invalid_cap(p->icu))
 		return 0;
 
-	r = L4XV_FN_i(l4_error(l4_icu_set_mode(p->icu, data->hwirq, p->trigger)));
+	r = L4XV_FN_e(l4_icu_set_mode(p->icu, data->hwirq, p->trigger));
 	if (r)
 		pr_err("l4x-irq: l4-set-mode(%d) failed for IRQ %d: %d\n",
 		       type, irq, r);
@@ -103,20 +103,19 @@ l4_cap_idx_t l4x_irq_init(l4_cap_idx_t icu, unsigned icu_irq, unsigned trigger,
 	if (l4_is_invalid_cap(cap = l4x_cap_alloc()))
 		return L4_INVALID_CAP;
 
-	if (L4XV_FN_i(l4_error(l4_icu_set_mode(icu, icu_irq, trigger))) < 0) {
+	if (L4XV_FN_e(l4_icu_set_mode(icu, icu_irq, trigger)) < 0) {
 		pr_err("l4x: Failed to set type for ICU-IRQ %s:%d\n",
 		       tag, icu_irq);
 		goto out1;
 	}
 
-	if (L4XV_FN_i(l4_error(l4_factory_create_irq(l4re_env()->factory,
-	                       cap)))) {
+	if (L4XV_FN_e(l4_factory_create_irq(l4re_env()->factory, cap))) {
 		pr_err("l4x: Failed to create IRQ for ICU-IRQ %s:%d\n",
 		       tag, icu_irq);
 		goto out1;
 	}
 
-	if (L4XV_FN_i(l4_error(l4_icu_bind(icu, icu_irq, cap)))) {
+	if (L4XV_FN_e(l4_icu_bind(icu, icu_irq, cap))) {
 		pr_err("l4x: Failed to bind ICU-IRQ %s:%d\n", tag, icu_irq);
 		goto out2;
 	}

@@ -40,18 +40,10 @@ static inline bool l4x_is_compat_syscall(unsigned long err, unsigned long trapno
 	return trapno == 0xd && (err == 0x802 || err == 0x402);
 }
 
-typedef asmlinkage long (*syscall32_t)(long a0,...);
-
-static inline int l4x_is_ia32_lx_syscall(unsigned nr)
-{
-	return nr < IA32_NR_syscalls;
-}
-
 static inline void dispatch_compat_system_call(struct task_struct *p,
                                                struct pt_regs *regsp)
 {
 	unsigned int syscall;
-	sys_call_ptr_t syscall_fn = NULL;
 	int show_syscalls = 0;
 
 #ifdef CONFIG_L4_VCPU
@@ -100,34 +92,15 @@ static inline void dispatch_compat_system_call(struct task_struct *p,
 		       (u32)regsp->bp);
 	}
 
-	if (unlikely(!l4x_is_ia32_lx_syscall(syscall))) {
+	if (unlikely(syscall >= IA32_NR_syscalls)) {
 		printk("Syscall %3d for %s(%d at %p): arg1 = %lx\n",
 		       syscall, p->comm, p->pid, (void *)regsp->ip,
 		       regsp->bx);
 		l4x_print_regs(p->thread.error_code, p->thread.trap_nr, regsp);
 	}
 
-	if (!likely(l4x_is_ia32_lx_syscall(syscall)
-	            && ((syscall_fn = ia32_sys_call_table[syscall]))))
-		goto ret_from_syscall;
+	do_syscall_32_irqs_on(regsp);
 
-	current_thread_info()->status |= TS_COMPAT;
-	if (unlikely(current_thread_info()->flags & _TIF_WORK_SYSCALL_ENTRY)) {
-		syscall = syscall_trace_enter(regsp);
-		if (!likely(l4x_is_ia32_lx_syscall(syscall)
-		            && ((syscall_fn = ia32_sys_call_table[syscall]))))
-			goto ret_from_syscall;
-	}
-
-	regsp->ax = syscall_fn((u32)regsp->bx, (u32)regsp->cx,
-	                       (u32)regsp->dx, (u32)regsp->si,
-	                       (u32)regsp->di, (u32)regsp->bp);
-
-	if (unlikely(current_thread_info()->flags & _TIF_ALLWORK_MASK))
-		syscall_return_slowpath(regsp);
-
-ret_from_syscall:
-	current_thread_info()->status &= ~TS_COMPAT;
 	if (show_syscalls)
 		printk("Syscall %3d for %s(%d at %p): return %lx/%ld\n",
 		       syscall, p->comm, p->pid, (void *)regsp->ip,

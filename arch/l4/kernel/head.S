@@ -29,8 +29,8 @@
 	jmp main
 .previous
 
-	__REFDATA
-.align 4
+__REFDATA
+	.align 4
 
 /*
  * BSS section
@@ -38,13 +38,13 @@
 __PAGE_ALIGNED_BSS
 	.align PAGE_SIZE
 #ifdef CONFIG_X86_PAE
-ENTRY(initial_pg_pmd)
+initial_pg_pmd:
 	.fill 1024*KPMDS,4,0
 #else
 ENTRY(initial_page_table)
 	.fill 1024,4,0
 #endif
-ENTRY(initial_pg_fixmap)
+initial_pg_fixmap:
 	.fill 1024,4,0
 ENTRY(empty_zero_page)
 	.fill 4096,1,0

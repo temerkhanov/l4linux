@@ -74,7 +74,7 @@ void __glue(CPU_NAME, _proc_init)(void)
 void __glue(CPU_NAME, _proc_fin)(void) { }
 
 void  __attribute__((noreturn))
-__glue(CPU_NAME, _reset)(unsigned long addr)
+__glue(CPU_NAME, _reset)(unsigned long addr, bool hvc)
 {
 	l4x_exit_l4linux_msg("%s called.\n", __func__);
 	while (1)

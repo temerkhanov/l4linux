@@ -151,7 +151,7 @@ static l4_msgtag_t l4timer_stop(l4_cap_idx_t timer)
 static int timer_set_oneshot(struct clock_event_device *clk)
 {
 	int r;
-	r = L4XV_FN_i(l4_error(l4timer_stop(this_cpu_read(timer_srv))));
+	r = L4XV_FN_e(l4timer_stop(this_cpu_read(timer_srv)));
 	if (r) {
 		pr_warn("l4timer: stop failed (%d)\n", r);
 		return r;
@@ -201,8 +201,7 @@ static int timer_clock_event_init(struct clock_event_device *clk)
 	if (l4_is_invalid_cap(irq_cap))
 		return -ENOMEM;
 
-	r = L4XV_FN_i(l4_error(l4_factory_create_irq(l4re_env()->factory,
-	                                             irq_cap)));
+	r = L4XV_FN_e(l4_factory_create_irq(l4re_env()->factory, irq_cap));
 	if (r)
 		goto out1;
 
@@ -272,25 +271,19 @@ static irqreturn_t timer_interrupt_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int timer_cpu_notify(struct notifier_block *self,
-                            unsigned long action, void *hcpu)
+static int l4x_timer_starting_cpu(unsigned cpu)
 {
-	switch (action & ~CPU_TASKS_FROZEN) {
-		case CPU_STARTING:
-			timer_clock_event_init(this_cpu_ptr(timer_evt));
-			break;
-		case CPU_DYING:
-			timer_clock_stop(this_cpu_ptr(timer_evt));
-			break;
-	}
-
-	return NOTIFY_OK;
+	BUG_ON(cpu != smp_processor_id());
+	timer_clock_event_init(this_cpu_ptr(timer_evt));
+	return 0;
 }
 
-static struct notifier_block arch_timer_cpu_nb = {
-	.notifier_call = timer_cpu_notify,
-};
-
+static int l4x_timer_dying_cpu(unsigned cpu)
+{
+	BUG_ON(cpu != smp_processor_id());
+	timer_clock_stop(this_cpu_ptr(timer_evt));
+	return 0;
+}
 
 static int __init l4x_timer_init_ret(void)
 {
@@ -312,14 +305,14 @@ static int __init l4x_timer_init_ret(void)
 	if (r < 0)
 		goto out2;
 
-	r = timer_clock_event_init(this_cpu_ptr(timer_evt));
+	r = cpuhp_setup_state(CPUHP_AP_ARM_ARCH_TIMER_STARTING,
+	                      "l4x/timer",
+	                      l4x_timer_starting_cpu, l4x_timer_dying_cpu);
 
-	r = register_cpu_notifier(&arch_timer_cpu_nb);
 	if (r)
 		goto out3;
 
 	return 0;
-
 
 out3:
 	free_percpu_irq(timer_irq, timer_evt);
@@ -337,7 +330,7 @@ static u64 kip_clock_read(void)
 }
 #endif
 
-static cycle_t l4x_clk_read(struct clocksource *cs)
+static u64 l4x_clk_read(struct clocksource *cs)
 {
 	return l4_kip_clock(l4re_kip());
 }

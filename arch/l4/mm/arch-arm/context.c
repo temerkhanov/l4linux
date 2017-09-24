@@ -252,7 +252,7 @@ void check_and_switch_context(struct mm_struct *mm, struct task_struct *tsk)
 	 * MMU, so switch exclusively to global mappings to avoid
 	 * speculative page table walking with the wrong TTBR.
 	 */
-	if (!config_enabled(CONFIG_L4))
+	if (!IS_ENABLED(CONFIG_L4))
 	cpu_set_reserved_ttbr0();
 
 	asid = atomic64_read(&mm->context.id);

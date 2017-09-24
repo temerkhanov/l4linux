@@ -6,6 +6,7 @@ quiet_cmd_localinst = LOCINST $@
       cmd_localinst = ([ -x "$(srctree)/arch/l4/install.local" ] && \
                        $(srctree)/arch/l4/install.local $@ $(BASEARCH)) || true
 
+OBJCOPYFLAGS_Image := -R .note -R .comment -S
 $(obj)/Image: vmlinux FORCE
 	$(call if_changed,objcopy)
 	@echo '  Kernel: $@ is ready'
@@ -52,7 +53,7 @@ $(obj)/res.o: $(obj)/func_list.h
 $(obj)/image.o: $(obj)/Image
 
 $(obj)/func_list.h: vmlinux
-	$(Q)$(OBJCOPY) -j .data.l4externals.str -O binary $< $@.tmp
+	$(Q)$(OBJCOPY) -j .data..l4externals.str -O binary $< $@.tmp
 	$(Q)perl -p -e 's/(.+?)\0/EF($$1)\n/g' $@.tmp > $@
 
 OBJS := $(addprefix $(obj)/,$(objects-y))
@@ -74,18 +75,19 @@ servers-y := $(if $(CONFIG_L4_SERVER),arch/l4/server/lib.a)
 LINKADDR-32 = 0xa8000000
 LINKADDR-64 = 0x68000000
 
+bid_link = $(L4DIR)/tool/bin/l4-bender -t ld \
+           $(call L4_BID_BENDER_DEFINES,$(L4OBJ),$(L4DIR),$(L4_GCCSYSLIBDIRS),$(L4_SYSTEM),l4f) \
+           --spec=$(L4DIR)/mk/bid-bender.spec -Dlinker="$(L4_LD)" --
+
 ldrImage: $(OBJS)
 	@echo "  LD      $@"
-	$(Q)$(LD) $(LDFLAGS) -Bstatic -o $@ \
-	  $(L4_LIBDIRS) \
-	  $(L4_CRT0_STATIC) $(OBJS) $(servers-y) \
-	  --start-group $(L4LIBS) $(L4_GCCLIB) --end-group \
-	  $(L4_CRTN_STATIC) \
+	$(Q)$(bid_link) $(LDFLAGS) -gc-sections -o $@ \
+	  -static $(L4_LIBDIRS) $(OBJS) $(servers-y) \
 	  --defsym __executable_start=$(LINKADDR-$(BITS)) \
 	  --defsym __L4_STACK_ADDR__=$(L4_BID_STACK_ADDR) \
 	  --defsym __L4_KIP_ADDR__=$(L4_BID_KIP_ADDR) \
           --defsym __l4sys_invoke_direct=$(L4_BID_KIP_ADDR)+$(L4_BID_KIP_OFFS_SYS_INVOKE) \
           --defsym __l4sys_debugger_direct=$(L4_BID_KIP_ADDR)+$(L4_BID_KIP_OFFS_SYS_DEBUGGER) \
-	  -T$(L4_LDS_stat_bin)
+	  $(addprefix -PC,$(L4_REQUIRED_MODS))
 
 PHONY += lImage

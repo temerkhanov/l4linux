@@ -19,7 +19,6 @@
 #include <linux/bootmem.h>
 #include <linux/seq_file.h>
 #include <linux/screen_info.h>
-#include <linux/of_iommu.h>
 #include <linux/of_platform.h>
 #include <linux/init.h>
 #include <linux/kexec.h>
@@ -70,6 +69,8 @@
 
 #include <asm/generic/log.h>
 
+#include <l4/log/log.h>
+
 #if defined(CONFIG_FPE_NWFPE) || defined(CONFIG_FPE_FASTFPE)
 char fpe_type[8];
 
@@ -84,8 +85,8 @@ __setup("fpe=", fpe_setup);
 
 extern void init_default_cache_policy(unsigned long);
 extern void paging_init(const struct machine_desc *desc);
-extern void early_paging_init(const struct machine_desc *);
-extern void sanity_check_meminfo(void);
+extern void early_mm_init(const struct machine_desc *);
+extern void adjust_lowmem_bounds(void);
 extern enum reboot_mode reboot_mode;
 extern void setup_dma_zone(const struct machine_desc *desc);
 
@@ -118,19 +119,19 @@ EXPORT_SYMBOL(elf_hwcap2);
 
 
 #ifdef MULTI_CPU
-struct processor processor __read_mostly;
+struct processor processor __ro_after_init;
 #endif
 #ifdef MULTI_TLB
-struct cpu_tlb_fns cpu_tlb __read_mostly;
+struct cpu_tlb_fns cpu_tlb __ro_after_init;
 #endif
 #ifdef MULTI_USER
-struct cpu_user_fns cpu_user __read_mostly;
+struct cpu_user_fns cpu_user __ro_after_init;
 #endif
 #ifdef MULTI_CACHE
-struct cpu_cache_fns cpu_cache __read_mostly;
+struct cpu_cache_fns cpu_cache __ro_after_init;
 #endif
 #ifdef CONFIG_OUTER_CACHE
-struct outer_cache_fns outer_cache __read_mostly;
+struct outer_cache_fns outer_cache __ro_after_init;
 EXPORT_SYMBOL(outer_cache);
 #endif
 
@@ -302,14 +303,11 @@ static int cpu_has_aliasing_icache(unsigned int arch)
 	case CPU_ARCH_ARMv7:
 #ifdef CONFIG_L4
 		id_reg = 0;
-#else
-		asm("mcr	p15, 2, %0, c0, c0, 0 @ set CSSELR"
-		    : /* No output operands */
-		    : "r" (1));
+#else /* L4 */
+		set_csselr(CSSELR_ICACHE | CSSELR_L1);
 		isb();
-		asm("mrc	p15, 1, %0, c0, c0, 0 @ read CCSIDR"
-		    : "=r" (id_reg));
-#endif
+		id_reg = read_ccsidr();
+#endif /* L4 */
 		line_size = 4 << ((id_reg & 0x7) + 2);
 		num_sets = ((id_reg >> 13) & 0x7fff) + 1;
 		aliasing_icache = (line_size * num_sets) > PAGE_SIZE;
@@ -329,11 +327,12 @@ static void __init cacheid_init(void)
 {
 	unsigned int arch = cpu_architecture();
 
-	if (arch == CPU_ARCH_ARMv7M) {
-		cacheid = 0;
-	} else if (arch >= CPU_ARCH_ARMv6) {
+	if (arch >= CPU_ARCH_ARMv6) {
 		unsigned int cachetype = read_cpuid_cachetype();
-		if ((cachetype & (7 << 29)) == 4 << 29) {
+
+		if ((arch == CPU_ARCH_ARMv7M) && !(cachetype & 0xf000f)) {
+			cacheid = 0;
+		} else if ((cachetype & (7 << 29)) == 4 << 29) {
 			/* ARMv7 register format */
 			arch = CPU_ARCH_ARMv7;
 			cacheid = CACHEID_VIPT_NONALIASING;
@@ -819,6 +818,7 @@ int __init arm_add_memory(u64 start, u64 size)
 	if (size == 0)
 		return -EINVAL;
 
+	LOG_printf("%s %d: start=%llx size=%lld\n", __func__, __LINE__, start, size); 
 	memblock_add(start, size);
 	return 0;
 }
@@ -865,7 +865,7 @@ static void __init request_standard_resources(const struct machine_desc *mdesc)
 	struct resource *res;
 
 	kernel_code.start   = virt_to_phys(_text);
-	kernel_code.end     = virt_to_phys(_etext - 1);
+	kernel_code.end     = virt_to_phys(__init_begin - 1);
 	kernel_data.start   = virt_to_phys(_sdata);
 #ifdef CONFIG_L4
 	// Our _end is aligned to 1MB and too far away...
@@ -875,15 +875,34 @@ static void __init request_standard_resources(const struct machine_desc *mdesc)
 #endif
 
 	for_each_memblock(memory, region) {
+#ifdef CONFIG_L4
+		phys_addr_t start = virt_to_phys(pfn_to_kaddr(memblock_region_memory_base_pfn(region)));
+		phys_addr_t end  = virt_to_phys(pfn_to_kaddr(memblock_region_memory_end_pfn(region)) - 1);
+#else
+		phys_addr_t start = __pfn_to_phys(memblock_region_memory_base_pfn(region));
+		phys_addr_t end = __pfn_to_phys(memblock_region_memory_end_pfn(region)) - 1;
+#endif /* L4 */
+		unsigned long boot_alias_start;
+
+		/*
+		 * Some systems have a special memory alias which is only
+		 * used for booting.  We need to advertise this region to
+		 * kexec-tools so they know where bootable RAM is located.
+		 */
+		boot_alias_start = phys_to_idmap(start);
+		if (arm_has_idmap_alias() && boot_alias_start != IDMAP_INVALID_ADDR) {
+			res = memblock_virt_alloc(sizeof(*res), 0);
+			res->name = "System RAM (boot alias)";
+			res->start = boot_alias_start;
+			res->end = phys_to_idmap(end);
+			res->flags = IORESOURCE_MEM | IORESOURCE_BUSY;
+			request_resource(&iomem_resource, res);
+		}
+
 		res = memblock_virt_alloc(sizeof(*res), 0);
 		res->name  = "System RAM";
-#ifdef CONFIG_L4
-		res->start = virt_to_phys(pfn_to_kaddr(memblock_region_memory_base_pfn(region)));
-		res->end = virt_to_phys(pfn_to_kaddr(memblock_region_memory_end_pfn(region)) - 1);
-#else
-		res->start = __pfn_to_phys(memblock_region_memory_base_pfn(region));
-		res->end = __pfn_to_phys(memblock_region_memory_end_pfn(region)) - 1;
-#endif
+		res->start = start;
+		res->end = end;
 		res->flags = IORESOURCE_SYSTEM_RAM | IORESOURCE_BUSY;
 
 		request_resource(&iomem_resource, res);
@@ -934,14 +953,9 @@ static int __init customize_machine(void)
 	 * machine from the device tree, if no callback is provided,
 	 * otherwise we would always need an init_machine callback.
 	 */
-	of_iommu_init();
 	if (machine_desc->init_machine)
 		machine_desc->init_machine();
-#ifdef CONFIG_OF
-	else
-		of_platform_populate(NULL, of_default_bus_match_table,
-					NULL, NULL);
-#endif
+
 	return 0;
 }
 arch_initcall(customize_machine);
@@ -1007,6 +1021,9 @@ static void __init reserve_crashkernel(void)
 
 	if (crash_base <= 0) {
 		unsigned long long crash_max = idmap_to_phys((u32)~0);
+		unsigned long long lowmem_max = __pa(high_memory - 1) + 1;
+		if (crash_max > lowmem_max)
+			crash_max = lowmem_max;
 		crash_base = memblock_find_in_range(CRASH_ALIGN, crash_max,
 						    crash_size, CRASH_ALIGN);
 		if (!crash_base) {
@@ -1037,9 +1054,25 @@ static void __init reserve_crashkernel(void)
 		(unsigned long)(crash_base >> 20),
 		(unsigned long)(total_mem >> 20));
 
+	/* The crashk resource must always be located in normal mem */
 	crashk_res.start = crash_base;
 	crashk_res.end = crash_base + crash_size - 1;
 	insert_resource(&iomem_resource, &crashk_res);
+
+	if (arm_has_idmap_alias()) {
+		/*
+		 * If we have a special RAM alias for use at boot, we
+		 * need to advertise to kexec tools where the alias is.
+		 */
+		static struct resource crashk_boot_res = {
+			.name = "Crash kernel (boot alias)",
+			.flags = IORESOURCE_BUSY | IORESOURCE_MEM,
+		};
+
+		crashk_boot_res.start = phys_to_idmap(crash_base);
+		crashk_boot_res.end = crashk_boot_res.start + crash_size - 1;
+		insert_resource(&iomem_resource, &crashk_boot_res);
+	}
 }
 #else
 static inline void reserve_crashkernel(void) {}
@@ -1081,8 +1114,8 @@ static void __init setup_arch_l4x_mem(void)
 	 * Maybe we should set PHYS_OFFSET > 0...
 	 */
 	arm_add_memory(0, PAGE_SIZE);
-	arm_add_memory((unsigned long)_stext,
-		       (unsigned long)_end - (unsigned long)_stext);
+	arm_add_memory((unsigned long)_text,
+		       (unsigned long)_end - (unsigned long)_text);
 	arm_add_memory(mem_start, mem_size);
 }
 #endif
@@ -1128,12 +1161,19 @@ void __init setup_arch(char **cmdline_p)
 	parse_early_param();
 
 #ifdef CONFIG_MMU
-	early_paging_init(mdesc);
+	early_mm_init(mdesc);
 #endif
 	setup_dma_zone(mdesc);
+	xen_early_init();
 	efi_init();
-	sanity_check_meminfo();
+	/*
+	 * Make sure the calculation for lowmem/highmem is set appropriately
+	 * before reserving/allocating any mmeory
+	 */
+	adjust_lowmem_bounds();
 	arm_memblock_init(mdesc);
+	/* Memory may have been removed so recalculate the bounds. */
+	adjust_lowmem_bounds();
 
 	early_ioremap_reset();
 
@@ -1151,7 +1191,6 @@ void __init setup_arch(char **cmdline_p)
 
 	arm_dt_init_cpu_maps();
 	psci_dt_init();
-	xen_early_init();
 #ifdef CONFIG_SMP
 	if (is_smp()) {
 		if (!mdesc->smp_init || !mdesc->smp_init()) {

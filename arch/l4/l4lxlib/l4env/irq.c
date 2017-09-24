@@ -3,7 +3,7 @@
  */
 #include <asm/io.h>
 
-#include <linux/sched.h>
+#include <linux/sched/task_stack.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
@@ -161,7 +161,7 @@ static inline void wait_for_irq_message(unsigned irq, l4_cap_idx_t irq_cap)
 					detach_from_interrupt(desc, irq,
 					                      irq_cap);
 			} else if (cmd == CMD_IRQ_UPDATE) {
-				l4x_prepare_irq_thread(current_thread_info_stack(),
+				l4x_prepare_irq_thread(l4x_current_stack_pointer(),
 				                       get_irq_cpu(irq));
 			} else
 				LOG_printf("Unknown cmd: %lu (enabled: %d)\n",
@@ -184,7 +184,6 @@ struct irq_thread_data {
 static L4_CV void irq_thread(void *data)
 {
 	struct irq_thread_data *d = (struct irq_thread_data *)data;
-	struct thread_info *ctx = current_thread_info_stack();
 	unsigned state;
 	unsigned irq = d->irq;
 	l4_cap_idx_t irq_cap = d->irq_cap;
@@ -194,7 +193,7 @@ static L4_CV void irq_thread(void *data)
 	*d->taken_out = 1;
 	d = NULL;
 
-	l4x_prepare_irq_thread(ctx, get_irq_cpu(irq));
+	l4x_prepare_irq_thread(l4x_current_stack_pointer(), get_irq_cpu(irq));
 	p->enabled = attach_to_irq(irq_to_desc(irq), irq_cap);
 
 	dd_printk("%s: Started IRQ thread for IRQ %d\n", __func__, irq);
@@ -212,7 +211,7 @@ static L4_CV void irq_thread(void *data)
 			LOG_printf("nesting with irq %d\n", state);
 		state = irq;
 
-		l4x_do_IRQ(irq, ctx);
+		l4x_do_IRQ(irq);
 	}
 } /* irq_thread */
 

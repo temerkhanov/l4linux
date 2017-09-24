@@ -17,6 +17,8 @@
 #include <linux/cpu.h>
 #include <linux/errno.h>
 #include <linux/sched.h>
+#include <linux/sched/task.h>
+#include <linux/sched/task_stack.h>
 #include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
@@ -26,7 +28,7 @@
 #include <linux/user.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/ptrace.h>
 #include <linux/notifier.h>
 #include <linux/kprobes.h>
@@ -35,6 +37,7 @@
 #include <linux/uaccess.h>
 #include <linux/io.h>
 #include <linux/ftrace.h>
+#include <linux/syscalls.h>
 
 #include <asm/pgtable.h>
 #include <asm/processor.h>
@@ -44,15 +47,22 @@
 #include <asm/desc.h>
 #include <asm/proto.h>
 #include <asm/ia32.h>
-#include <asm/idle.h>
 #include <asm/syscalls.h>
 #include <asm/debugreg.h>
 #include <asm/switch_to.h>
 #include <asm/xen/hypervisor.h>
+#include <asm/vdso.h>
+#include <asm/intel_rdt.h>
+#include <asm/unistd.h>
+#ifdef CONFIG_IA32_EMULATION
+/* Not included via unistd.h */
+#include <asm/unistd_32_ia32.h>
+#endif
 
+#ifdef CONFIG_L4
 #include <asm/generic/stack_id.h>
-
-asmlinkage extern void ret_from_fork(void);
+#include <asm/generic/task.h>
+#endif /* L4 */
 
 __visible DEFINE_PER_CPU(unsigned long, rsp_scratch);
 
@@ -66,10 +76,15 @@ void __show_regs(struct pt_regs *regs, int all)
 	unsigned int fsindex, gsindex;
 	unsigned int ds, cs, es;
 
-	printk(KERN_DEFAULT "RIP: %04lx:[<%016lx>] ", regs->cs & 0xffff, regs->ip);
-	printk_address(regs->ip);
-	printk(KERN_DEFAULT "RSP: %04lx:%016lx  EFLAGS: %08lx\n", regs->ss,
-			regs->sp, regs->flags);
+	printk(KERN_DEFAULT "RIP: %04lx:%pS\n", regs->cs & 0xffff,
+		(void *)regs->ip);
+	printk(KERN_DEFAULT "RSP: %04lx:%016lx EFLAGS: %08lx", regs->ss,
+		regs->sp, regs->flags);
+	if (regs->orig_ax != -1)
+		pr_cont(" ORIG_RAX: %016lx\n", regs->orig_ax);
+	else
+		pr_cont("\n");
+
 	printk(KERN_DEFAULT "RAX: %016lx RBX: %016lx RCX: %016lx\n",
 	       regs->ax, regs->bx, regs->cx);
 	printk(KERN_DEFAULT "RDX: %016lx RSI: %016lx RDI: %016lx\n",
@@ -106,7 +121,7 @@ void __show_regs(struct pt_regs *regs, int all)
 #else /* L4 */
 	cr0 = read_cr0();
 	cr2 = read_cr2();
-	cr3 = read_cr3();
+	cr3 = __read_cr3();
 	cr4 = __read_cr4();
 #endif /* L4 */
 
@@ -126,12 +141,13 @@ void __show_regs(struct pt_regs *regs, int all)
 	get_debugreg(d7, 7);
 
 	/* Only print out debug registers if they are in their non-default state. */
-	if ((d0 == 0) && (d1 == 0) && (d2 == 0) && (d3 == 0) &&
-	    (d6 == DR6_RESERVED) && (d7 == 0x400))
-		return;
-
-	printk(KERN_DEFAULT "DR0: %016lx DR1: %016lx DR2: %016lx\n", d0, d1, d2);
-	printk(KERN_DEFAULT "DR3: %016lx DR6: %016lx DR7: %016lx\n", d3, d6, d7);
+	if (!((d0 == 0) && (d1 == 0) && (d2 == 0) && (d3 == 0) &&
+	    (d6 == DR6_RESERVED) && (d7 == 0x400))) {
+		printk(KERN_DEFAULT "DR0: %016lx DR1: %016lx DR2: %016lx\n",
+		       d0, d1, d2);
+		printk(KERN_DEFAULT "DR3: %016lx DR6: %016lx DR7: %016lx\n",
+		       d3, d6, d7);
+	}
 #endif /* L4 */
 
 	if (boot_cpu_has(X86_FEATURE_OSPKE))
@@ -146,7 +162,7 @@ void release_thread(struct task_struct *dead_task)
 			pr_warn("WARNING: dead process %s still has LDT? <%p/%d>\n",
 				dead_task->comm,
 				dead_task->mm->context.ldt->entries,
-				dead_task->mm->context.ldt->size);
+				dead_task->mm->context.ldt->nr_entries);
 			BUG();
 		}
 #endif
@@ -158,52 +174,64 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 {
 	int err;
 	struct pt_regs *childregs;
+	struct fork_frame *fork_frame;
+	struct inactive_task_frame *frame;
 	struct task_struct *me = current;
-#ifdef CONFIG_L4
-	l4_vcpu_state_t *vcpu;
+#ifdef CONFIG_L4_VCPU
+	l4_vcpu_state_t *sstate;
+#else
+	struct l4x_segment_user_state_t *sstate;
 #endif
 
 	p->thread.sp0 = (unsigned long)task_stack_page(p) + THREAD_SIZE;
 	childregs = task_pt_regs(p);
-	p->thread.sp = (unsigned long) childregs;
-	set_tsk_thread_flag(p, TIF_FORK);
+	fork_frame = container_of(childregs, struct fork_frame, regs);
+	frame = &fork_frame->frame;
+	frame->bp = 0;
+	frame->ret_addr = (unsigned long) ret_from_fork;
+	p->thread.sp = (unsigned long) fork_frame;
 	p->thread.io_bitmap_ptr = NULL;
 
 #ifdef CONFIG_L4
-	vcpu = l4x_vcpu_ptr[get_cpu()];
-	p->thread.gsindex = vcpu->r.gs;
+	l4x_stack_set((unsigned long)p->stack, l4_utcb());
+	l4x_init_thread_struct(p);
+
+#ifdef CONFIG_L4_VCPU
+	sstate = l4x_vcpu_ptr[get_cpu()];
 #else
-	savesegment(gs, p->thread.gsindex);
+	sstate = l4x_current_useg();
 #endif
+	p->thread.gsindex = L4X_SEG(sstate, gs);
+#else /* L4 */
+	savesegment(gs, p->thread.gsindex);
+#endif /* L4 */
 	p->thread.gsbase = p->thread.gsindex ? 0 : me->thread.gsbase;
 #ifdef CONFIG_L4
-	p->thread.fsindex = vcpu->r.fs;
+	p->thread.fsindex = L4X_SEG(sstate, fs);
 #else
 	savesegment(fs, p->thread.fsindex);
-#endif
+#endif /* L4 */
 	p->thread.fsbase = p->thread.fsindex ? 0 : me->thread.fsbase;
 #ifdef CONFIG_L4
-	p->thread.es = vcpu->r.es;
-	p->thread.ds = vcpu->r.ds;
+	p->thread.es = L4X_SEG(sstate, es);
+	p->thread.ds = L4X_SEG(sstate, ds);
+#ifdef CONFIG_L4_VCPU
 	put_cpu();
+#endif
 #else
 	savesegment(es, p->thread.es);
 	savesegment(ds, p->thread.ds);
-#endif
+#endif /* L4 */
 	memset(p->thread.ptrace_bps, 0, sizeof(p->thread.ptrace_bps));
 
 	if (unlikely(p->flags & PF_KTHREAD)) {
 		/* kernel thread */
 		memset(childregs, 0, sizeof(struct pt_regs));
-		childregs->sp = (unsigned long)childregs;
-		childregs->ss = __KERNEL_DS;
-		childregs->bx = sp; /* function */
-		childregs->bp = arg;
-		childregs->orig_ax = -1;
-		childregs->cs = __KERNEL_CS | get_kernel_rpl();
-		childregs->flags = X86_EFLAGS_IF | X86_EFLAGS_FIXED;
+		frame->bx = sp;		/* function */
+		frame->r12 = arg;
 		return 0;
 	}
+	frame->bx = 0;
 	*childregs = *current_pt_regs();
 
 	childregs->ax = 0;
@@ -231,7 +259,7 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long sp,
 				(struct user_desc __user *)tls, 0);
 		else
 #endif
-			err = do_arch_prctl(p, ARCH_SET_FS, tls);
+			err = do_arch_prctl_64(p, ARCH_SET_FS, tls);
 		if (err)
 			goto out;
 	}
@@ -299,27 +327,16 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	int cpu = smp_processor_id();
 	struct tss_struct *tss = &per_cpu(cpu_tss, cpu);
 	unsigned prev_fsindex, prev_gsindex;
-	fpu_switch_t fpu_switch;
-#ifdef CONFIG_L4_VCPU
-	l4_vcpu_state_t *vcpu = l4x_vcpu_ptr[cpu];
-#endif
 
-	fpu_switch = switch_fpu_prepare(prev_fpu, next_fpu, cpu);
+	switch_fpu_prepare(prev_fpu, cpu);
 
 	/* We must save %fs and %gs before load_TLS() because
 	 * %fs and %gs may be cleared by load_TLS().
 	 *
 	 * (e.g. xen_load_tls())
 	 */
-#ifdef CONFIG_L4
-#ifdef CONFIG_L4_VCPU
-	prev_fsindex = vcpu->r.fs;
-	prev_gsindex = vcpu->r.gs;
-#endif
-#else
 	savesegment(fs, prev_fsindex);
 	savesegment(gs, prev_gsindex);
-#endif
 
 	/*
 	 * Load TLS before restoring any segments so that segment loads
@@ -332,7 +349,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	    && next->l4x.user_thread_id
 #endif
 	   )
-#endif
+#endif /* L4 */
 	load_TLS(next, cpu);
 
 	/*
@@ -344,7 +361,6 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	 */
 	arch_end_context_switch(next_p);
 
-#ifdef CONFIG_L4_VCPU
 	/* Switch DS and ES.
 	 *
 	 * Reading them only returns the selectors, but writing them (if
@@ -359,29 +375,13 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	 * Note that we don't need to do anything for CS and SS, as
 	 * those are saved and restored as part of pt_regs.
 	 */
-#ifdef CONFIG_L4
-	prev->es = vcpu->r.es;
-#else
 	savesegment(es, prev->es);
-#endif
 	if (unlikely(next->es | prev->es))
-#ifdef CONFIG_L4
-		vcpu->r.es = next->es;
-#else
 		loadsegment(es, next->es);
-#endif
 
-#ifdef CONFIG_L4
-	prev->ds = vcpu->r.ds;
-#else
 	savesegment(ds, prev->ds);
-#endif
 	if (unlikely(next->ds | prev->ds))
-#ifdef CONFIG_L4
-		vcpu->r.ds = next->ds;
-#else
 		loadsegment(ds, next->ds);
-#endif
 
 	/*
 	 * Switch FS and GS.
@@ -404,25 +404,17 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	 */
 	if (next->fsindex) {
 		/* Loading a nonzero value into FS sets the index and base. */
-#ifdef CONFIG_L4
-		vcpu->r.fs = next->fsindex;
-#else
 		loadsegment(fs, next->fsindex);
-#endif
 	} else {
 		if (next->fsbase) {
 			/* Next index is zero but next base is nonzero. */
 			if (prev_fsindex)
-#ifdef CONFIG_L4
-				vcpu->r.fs = 0;
-#else
 				loadsegment(fs, 0);
-#endif
 #ifdef CONFIG_L4
-			vcpu->r.fs_base = next->fsbase;
+			L4X_SEG_CUR(fs_base) = next->fsbase;
 #else
 			wrmsrl(MSR_FS_BASE, next->fsbase);
-#endif
+#endif /* L4 */
 		} else {
 			/* Next base and index are both zero. */
 			if (static_cpu_has_bug(X86_BUG_NULL_SEG)) {
@@ -430,12 +422,8 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 				 * We don't know the previous base and can't
 				 * find out without RDMSR.  Forcibly clear it.
 				 */
-#ifdef CONFIG_L4
-				vcpu->r.fs = 0;
-#else
 				loadsegment(fs, __USER_DS);
 				loadsegment(fs, 0);
-#endif
 			} else {
 				/*
 				 * If the previous index is zero and ARCH_SET_FS
@@ -443,11 +431,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 				 * also zero and we don't need to do anything.
 				 */
 				if (prev->fsbase || prev_fsindex)
-#ifdef CONFIG_L4
-					vcpu->r.fs = 0;
-#else
 					loadsegment(fs, 0);
-#endif
 			}
 		}
 	}
@@ -465,24 +449,24 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	if (next->gsindex) {
 		/* Loading a nonzero value into GS sets the index and base. */
 #ifdef CONFIG_L4
-		vcpu->r.gs = next->gsindex;
+		L4X_SEG_CUR(gs) = next->gsindex;
 #else
 		load_gs_index(next->gsindex);
-#endif
+#endif /* L4 */
 	} else {
 		if (next->gsbase) {
 			/* Next index is zero but next base is nonzero. */
 			if (prev_gsindex)
 #ifdef CONFIG_L4
-				vcpu->r.gs = 0;
+				L4X_SEG_CUR(gs) = 0;
 #else
 				load_gs_index(0);
-#endif
+#endif /* L4 */
 #ifdef CONFIG_L4
-			vcpu->r.gs_base = next->gsbase;
+			L4X_SEG_CUR(gs_base) = next->gsbase;
 #else
 			wrmsrl(MSR_KERNEL_GS_BASE, next->gsbase);
-#endif
+#endif /* L4 */
 		} else {
 			/* Next base and index are both zero. */
 			if (static_cpu_has_bug(X86_BUG_NULL_SEG)) {
@@ -495,11 +479,11 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 				 * for Xen or a new pvop.
 				 */
 #ifdef CONFIG_L4
-				vcpu->r.gs = 0;
+				L4X_SEG_CUR(gs) = 0;
 #else
 				load_gs_index(__USER_DS);
 				load_gs_index(0);
-#endif
+#endif /* L4 */
 			} else {
 				/*
 				 * If the previous index is zero and ARCH_SET_GS
@@ -508,10 +492,10 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 				 */
 				if (prev->gsbase || prev_gsindex)
 #ifdef CONFIG_L4
-					vcpu->r.gs = 0;
+					L4X_SEG_CUR(gs) = 0;
 #else
 					load_gs_index(0);
-#endif
+#endif /* L4 */
 			}
 		}
 	}
@@ -522,12 +506,11 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	 * us and AMD user code can program any 32-bit value without telling
 	 * us.
 	 */
-#endif /* L4_VCPU */
 	if (prev_gsindex)
 		prev->gsbase = 0;
 	prev->gsindex = prev_gsindex;
 
-	switch_fpu_finish(next_fpu, fpu_switch);
+	switch_fpu_finish(next_fpu, cpu);
 
 	/*
 	 * Switch the PDA and FPU contexts.
@@ -544,7 +527,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 		     task_thread_info(prev_p)->flags & _TIF_WORK_CTXSW_PREV))
 		__switch_to_xtra(prev_p, next_p, tss);
 
-#ifdef CONFIG_XEN
+#ifdef CONFIG_XEN_PV
 	/*
 	 * On Xen PV, IOPL bits in pt_regs->flags have no effect, and
 	 * current_pt_regs()->flags may not match the current task's
@@ -592,6 +575,9 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 #endif
 
 
+	/* Load the Intel cache allocation PQR MSR. */
+	intel_rdt_sched_in();
+
 #ifdef CONFIG_L4_VCPU
 	l4x_vcpu_ptr[cpu]->entry_sp = (unsigned long)task_pt_regs(next_p);
 #endif
@@ -607,6 +593,8 @@ void set_personality_64bit(void)
 	clear_thread_flag(TIF_IA32);
 	clear_thread_flag(TIF_ADDR32);
 	clear_thread_flag(TIF_X32);
+	/* Pretend that this comes from a 64bit execve */
+	task_pt_regs(current)->orig_ax = __NR_execve;
 
 	/* Ensure the corresponding mm is not marked. */
 	if (current->mm)
@@ -619,103 +607,149 @@ void set_personality_64bit(void)
 	current->personality &= ~READ_IMPLIES_EXEC;
 }
 
+static void __set_personality_x32(void)
+{
+#ifdef CONFIG_X86_X32
+	clear_thread_flag(TIF_IA32);
+	set_thread_flag(TIF_X32);
+	if (current->mm)
+		current->mm->context.ia32_compat = TIF_X32;
+	current->personality &= ~READ_IMPLIES_EXEC;
+	/*
+	 * in_compat_syscall() uses the presence of the x32 syscall bit
+	 * flag to determine compat status.  The x86 mmap() code relies on
+	 * the syscall bitness so set x32 syscall bit right here to make
+	 * in_compat_syscall() work during exec().
+	 *
+	 * Pretend to come from a x32 execve.
+	 */
+	task_pt_regs(current)->orig_ax = __NR_x32_execve | __X32_SYSCALL_BIT;
+	current->thread.status &= ~TS_COMPAT;
+#endif
+}
+
+static void __set_personality_ia32(void)
+{
+#ifdef CONFIG_IA32_EMULATION
+	set_thread_flag(TIF_IA32);
+	clear_thread_flag(TIF_X32);
+	if (current->mm)
+		current->mm->context.ia32_compat = TIF_IA32;
+	current->personality |= force_personality32;
+	/* Prepare the first "return" to user space */
+	task_pt_regs(current)->orig_ax = __NR_ia32_execve;
+	current->thread.status |= TS_COMPAT;
+#endif
+}
+
 void set_personality_ia32(bool x32)
 {
-	/* inherit personality from parent */
-
 	/* Make sure to be in 32bit mode */
 	set_thread_flag(TIF_ADDR32);
 
-	/* Mark the associated mm as containing 32-bit tasks. */
-	if (x32) {
-		clear_thread_flag(TIF_IA32);
-		set_thread_flag(TIF_X32);
-		if (current->mm)
-			current->mm->context.ia32_compat = TIF_X32;
-		current->personality &= ~READ_IMPLIES_EXEC;
-		/* in_compat_syscall() uses the presence of the x32
-		   syscall bit flag to determine compat status */
-		current_thread_info()->status &= ~TS_COMPAT;
-	} else {
-		set_thread_flag(TIF_IA32);
-		clear_thread_flag(TIF_X32);
-		if (current->mm)
-			current->mm->context.ia32_compat = TIF_IA32;
-		current->personality |= force_personality32;
-		/* Prepare the first "return" to user space */
-		current_thread_info()->status |= TS_COMPAT;
-	}
+	if (x32)
+		__set_personality_x32();
+	else
+		__set_personality_ia32();
 }
 EXPORT_SYMBOL_GPL(set_personality_ia32);
 
-long do_arch_prctl(struct task_struct *task, int code, unsigned long addr)
+#ifdef CONFIG_CHECKPOINT_RESTORE
+static long prctl_map_vdso(const struct vdso_image *image, unsigned long addr)
+{
+	int ret;
+
+	ret = map_vdso_once(image, addr);
+	if (ret)
+		return ret;
+
+	return (long)image->size;
+}
+#endif
+
+long do_arch_prctl_64(struct task_struct *task, int option, unsigned long arg2)
 {
 	int ret = 0;
 	int doit = task == current;
 	int cpu;
 
-	switch (code) {
+	switch (option) {
 	case ARCH_SET_GS:
-		if (addr >= TASK_SIZE_MAX)
+		if (arg2 >= TASK_SIZE_MAX)
 			return -EPERM;
 		cpu = get_cpu();
 		task->thread.gsindex = 0;
-		task->thread.gsbase = addr;
+		task->thread.gsbase = arg2;
 		if (doit) {
 			load_gs_index(0);
 #ifdef CONFIG_L4
-			l4x_current_vcpu()->r.gs_base = addr;
+			L4X_SEG_CUR(gs_base) = arg2;
 #else
-			ret = wrmsrl_safe(MSR_KERNEL_GS_BASE, addr);
-#endif
+			ret = wrmsrl_safe(MSR_KERNEL_GS_BASE, arg2);
+#endif /* L4 */
 		}
 		put_cpu();
 		break;
 	case ARCH_SET_FS:
 		/* Not strictly needed for fs, but do it for symmetry
 		   with gs */
-		if (addr >= TASK_SIZE_MAX)
+		if (arg2 >= TASK_SIZE_MAX)
 			return -EPERM;
 		cpu = get_cpu();
 		task->thread.fsindex = 0;
-		task->thread.fsbase = addr;
+		task->thread.fsbase = arg2;
 		if (doit) {
 			/* set the selector to 0 to not confuse __switch_to */
 			loadsegment(fs, 0);
 #ifdef CONFIG_L4
-			l4x_current_vcpu()->r.fs_base = addr;
+			L4X_SEG_CUR(fs_base) = arg2;
 #else
-			ret = wrmsrl_safe(MSR_FS_BASE, addr);
-#endif
+			ret = wrmsrl_safe(MSR_FS_BASE, arg2);
+#endif /* L4 */
 		}
 		put_cpu();
 		break;
 	case ARCH_GET_FS: {
 		unsigned long base;
+
 		if (doit)
 #ifdef CONFIG_L4
-			base = l4x_vcpu_ptr[smp_processor_id()]->r.fs_base;
+			base = L4X_SEG_CUR(fs_base);
 #else
 			rdmsrl(MSR_FS_BASE, base);
-#endif
+#endif /* L4 */
 		else
 			base = task->thread.fsbase;
-		ret = put_user(base, (unsigned long __user *)addr);
+		ret = put_user(base, (unsigned long __user *)arg2);
 		break;
 	}
 	case ARCH_GET_GS: {
 		unsigned long base;
+
 		if (doit)
 #ifdef CONFIG_L4
-			base = l4x_vcpu_ptr[smp_processor_id()]->r.gs_base;
+			base = L4X_SEG_CUR(gs_base);
 #else
 			rdmsrl(MSR_KERNEL_GS_BASE, base);
-#endif
+#endif /* L4 */
 		else
 			base = task->thread.gsbase;
-		ret = put_user(base, (unsigned long __user *)addr);
+		ret = put_user(base, (unsigned long __user *)arg2);
 		break;
 	}
+
+#ifdef CONFIG_CHECKPOINT_RESTORE
+# ifdef CONFIG_X86_X32_ABI
+	case ARCH_MAP_VDSO_X32:
+		return prctl_map_vdso(&vdso_image_x32, arg2);
+# endif
+# if defined CONFIG_X86_32 || defined CONFIG_IA32_EMULATION
+	case ARCH_MAP_VDSO_32:
+		return prctl_map_vdso(&vdso_image_32, arg2);
+# endif
+	case ARCH_MAP_VDSO_64:
+		return prctl_map_vdso(&vdso_image_64, arg2);
+#endif
 
 	default:
 		ret = -EINVAL;
@@ -725,10 +759,23 @@ long do_arch_prctl(struct task_struct *task, int code, unsigned long addr)
 	return ret;
 }
 
-long sys_arch_prctl(int code, unsigned long addr)
+SYSCALL_DEFINE2(arch_prctl, int, option, unsigned long, arg2)
 {
-	return do_arch_prctl(current, code, addr);
+	long ret;
+
+	ret = do_arch_prctl_64(current, option, arg2);
+	if (ret == -EINVAL)
+		ret = do_arch_prctl_common(current, option, arg2);
+
+	return ret;
 }
+
+#ifdef CONFIG_IA32_EMULATION
+COMPAT_SYSCALL_DEFINE2(arch_prctl, int, option, unsigned long, arg2)
+{
+	return do_arch_prctl_common(current, option, arg2);
+}
+#endif
 
 unsigned long KSTK_ESP(struct task_struct *task)
 {

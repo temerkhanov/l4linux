@@ -43,7 +43,7 @@ int Fdx_factory::get_unsigned(L4::Ipc::Varg o, const char *param,
                               unsigned &result)
 {
 	char buf[12];
-	int param_len = strlen(param);
+	unsigned param_len = strlen(param);
 
 	if (o.length() > param_len
 	    && !strncmp(o.value<char const *>(), param, param_len)) {
@@ -219,10 +219,8 @@ Fdx_server::alloc_shm(L4::Cap<L4Re::Dataspace> *ds,
 	r = L4Re::Env::env()->rm()->attach(addr, size,
 	                                   L4Re::Rm::Search_addr,
 	                                   L4::Ipc::make_cap_rw(d.get()));
-	if (r < 0) {
-		L4Re::Env::env()->mem_alloc()->free(d.get());
+	if (r < 0)
 		return r;
-	}
 
 	*ds = d.release();
 	return 0;
@@ -231,10 +229,14 @@ Fdx_server::alloc_shm(L4::Cap<L4Re::Dataspace> *ds,
 void
 Fdx_server::free_shm(void *addr)
 {
+	int r;
+
 	L4::Cap<L4Re::Dataspace> ds;
 
-	L4Re::Env::env()->rm()->detach(addr, &ds);
-	L4Re::Env::env()->mem_alloc()->free(ds);
+	r = L4Re::Env::env()->rm()->detach(addr, &ds);
+
+	if (r == L4Re::Rm::Detached_ds)
+		L4Re::Util::cap_alloc.free(ds, L4Re::This_task);
 }
 
 int

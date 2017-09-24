@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#define __USE_GNU /* For mremap */
 #include <sys/mman.h>
 #include <bits/l4-malloc.h>
 
@@ -75,6 +76,17 @@ void *mmap(void *addr, size_t length, int prot, int flags,
 	return MAP_FAILED;
 }
 
+void *mremap(void *old_addr, size_t old_size, size_t new_size,
+             int flags, ...)
+{
+	(void)old_addr;
+	(void)old_size;
+	(void)new_size;
+	(void)flags;
+	LOG_printf("Unimplemented mremap called\n");
+	return MAP_FAILED;
+}
+
 int munmap(void *addr, size_t length)
 {
 	(void)addr;
@@ -109,9 +121,13 @@ int main(int argc, char **argv)
 	int i;
 	int (*entry)(int, char **);
 
-	if (!l4util_elf_check_magic(ehdr)
-	    || !l4util_elf_check_arch(ehdr)) {
+	if (!l4util_elf_check_magic(ehdr)) {
 		printf("lxldr: Invalid vmlinux binary (No ELF)\n");
+		return 1;
+	}
+
+	if (!l4util_elf_check_arch(ehdr)) {
+		printf("lxldr: Invalid vmlinux binary architecture\n");
 		return 1;
 	}
 
@@ -161,19 +177,22 @@ int main(int argc, char **argv)
 				return 1;
 			}
 
-			if (l4re_ma_alloc(ph->p_memsz, ds,
-			                  L4RE_MA_CONTINUOUS | L4RE_MA_PINNED)) {
-				printf("lxldr: could not allocate memory\n");
+			r = l4re_ma_alloc(ph->p_memsz, ds,
+			                  L4RE_MA_CONTINUOUS | L4RE_MA_PINNED);
+			if (r) {
+				printf("lxldr: could not allocate memory: %d\n",
+				       r);
 				return 1;
 			}
 
 			map_addr = ph->p_paddr;
-			if (l4re_rm_attach((void **)&map_addr,
+			r = l4re_rm_attach((void **)&map_addr,
 			                    ph->p_memsz, L4RE_RM_EAGER_MAP,
-			                    ds | L4_CAP_FPAGE_RW, 0, 0)) {
-				printf("lxldr: failed attaching memory:"
+			                    ds | L4_CAP_FPAGE_RW, 0, 0);
+			if (r) {
+				printf("lxldr: failed attaching memory (%d):"
 				       " "FMT" - "FMT"\n",
-				       ph->p_paddr,
+				       r, ph->p_paddr,
 				       ph->p_paddr + ph->p_memsz - 1);
 				return 1;
 			}
@@ -191,9 +210,10 @@ int main(int argc, char **argv)
 			return 1;
 		}
 
-		if (l4re_ma_alloc(ph->p_memsz, new_ds,
-		                  L4RE_MA_CONTINUOUS | L4RE_MA_PINNED)) {
-			printf("lxldr: could not allocate memory\n");
+		r = l4re_ma_alloc(ph->p_memsz, new_ds,
+		                  L4RE_MA_CONTINUOUS | L4RE_MA_PINNED);
+		if (r) {
+			printf("lxldr: could not allocate memory: %d\n", r);
 			return 1;
 		}
 
@@ -212,12 +232,13 @@ int main(int argc, char **argv)
 
 		r = l4re_ds_copy_in(new_ds, 0, ds, offset, ph->p_memsz);
 		if (r)
-			printf("l4dm_mem_copyin failed\n");
+			printf("l4dm_mem_copyin failed: %d\n", r);
 
 		map_addr = ph->p_paddr;
-		if (l4re_rm_attach((void **)&map_addr,
-		                    ph->p_memsz, L4RE_RM_EAGER_MAP,
-		                    new_ds | L4_CAP_FPAGE_RW, 0, 0)) {
+		r = l4re_rm_attach((void **)&map_addr,
+		                   ph->p_memsz, L4RE_RM_EAGER_MAP,
+		                   new_ds | L4_CAP_FPAGE_RW, 0, 0);
+		if (r) {
 			printf("lxldr: failed to attach section\n");
 			return 1;
 		}

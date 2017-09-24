@@ -70,7 +70,7 @@ static inline void l4x_svm_vmcb_dump(struct kvm_vcpu *vcpu)
 	kvm_err("nested_ctl = %016llx\n", c.nested_ctl);
 	kvm_err("inj = %08x inj_err= %08x\n", c.event_inj, c.event_inj_err);
 	kvm_err("ncr3 = %016llx\n", c.nested_cr3);
-	kvm_err("lbr_ctl = %016llx\n", c.lbr_ctl);
+	kvm_err("virt_ext = %016llx\n", c.virt_ext);
 	kvm_err("*********************** end_of_dump ***********************\n");
 }
 

@@ -8,7 +8,6 @@
  * io_apic.c.)
  */
 
-#include <linux/module.h>
 #include <linux/seq_file.h>
 #include <linux/interrupt.h>
 #include <linux/kernel_stat.h>
@@ -123,8 +122,7 @@ void irq_ctx_init(int cpu)
 	per_cpu(hardirq_stack, cpu) = irqstk;
 
 #ifdef CONFIG_L4
-	((struct thread_info *)irqstk)->cpu = cpu;
-	l4x_stack_set((struct thread_info *)irqstk, l4x_cpu_thread_get(cpu));
+	l4x_stack_set((unsigned long)irqstk, l4x_cpu_thread_get(cpu));
 #endif
 
 	irqstk = page_address(alloc_pages_node(cpu_to_node(cpu),
@@ -133,8 +131,7 @@ void irq_ctx_init(int cpu)
 	per_cpu(softirq_stack, cpu) = irqstk;
 
 #ifdef CONFIG_L4
-	((struct thread_info *)irqstk)->cpu = cpu;
-	l4x_stack_set((struct thread_info *)irqstk, l4x_cpu_thread_get(cpu));
+	l4x_stack_set((unsigned long)irqstk, l4x_cpu_thread_get(cpu));
 #endif
 
 	printk(KERN_DEBUG "CPU %u irqstacks, hard=%p soft=%p\n",
@@ -144,7 +141,7 @@ void irq_ctx_init(int cpu)
 void do_softirq_own_stack(void)
 {
 #if defined(CONFIG_L4) && !defined(CONFIG_L4_VCPU)
-	struct thread_info *curstk = current_stack();;
+	unsigned long cursp = (unsigned long)current_stack();
 #endif
 	struct irq_stack *irqstk;
 	u32 *isp, *prev_esp;
@@ -159,13 +156,17 @@ void do_softirq_own_stack(void)
 	*prev_esp = current_stack_pointer();
 
 #if defined(CONFIG_L4) && !defined(CONFIG_L4_VCPU)
-	l4x_stack_set((struct thread_info *)irqstk, l4_utcb());
+	l4x_stack_set((unsigned long)irqstk, l4_utcb());
+#ifndef CONFIG_THREAD_INFO_IN_TASK
 	per_cpu(l4x_current_ti, smp_processor_id()) = (struct thread_info *)irqstk;
+#endif
 #endif
 	call_on_stack(__do_softirq, isp);
 #if defined(CONFIG_L4) && !defined(CONFIG_L4_VCPU)
+#ifndef CONFIG_THREAD_INFO_IN_TASK
 	per_cpu(l4x_current_ti, smp_processor_id()) = (struct thread_info *)curstk;
-	l4x_stack_set((struct thread_info *)curstk, l4_utcb());
+#endif
+	l4x_stack_set(cursp, l4_utcb());
 #endif
 }
 
