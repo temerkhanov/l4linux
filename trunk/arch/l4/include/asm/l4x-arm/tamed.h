@@ -8,6 +8,8 @@
 #error Only use from within tamed.c!
 #endif
 
+#include <l4/sys/atomic.h>
+
 /* Do not use atomic.h functions here as they use the locking we try to
  * implement first here. */
 static inline int l4x_atomic_inc(volatile long int *val)

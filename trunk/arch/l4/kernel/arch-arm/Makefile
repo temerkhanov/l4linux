@@ -54,7 +54,7 @@ $(call L4X_FILEREF, ../../../arm/kernel,                  \
 
 KBUILD_CPPFLAGS	+= -I$(srctree)/arch/arm/kernel
 
-CPPFLAGS_vmlinux.lds += -DTEXT_OFFSET=0x0100000
+CPPFLAGS_vmlinux.lds += -DTEXT_OFFSET=0x0200000
 
 CFLAGS_REMOVE_return_address.o = -pg
 

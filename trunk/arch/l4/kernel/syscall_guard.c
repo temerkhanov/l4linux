@@ -3,7 +3,7 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/sched.h>
+#include <linux/sched/task_stack.h>
 
 #include <l4/sys/utcb.h>
 #include <l4/log/log.h>

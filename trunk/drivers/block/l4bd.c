@@ -32,7 +32,7 @@ MODULE_AUTHOR("Adam Lackorzynski <adam@l4re.org");
 MODULE_DESCRIPTION("Driver for the L4 FDX interface");
 MODULE_LICENSE("GPL");
 
-L4_EXTERNAL_FUNC(l4fdxc_init);
+L4_EXTERNAL_FUNC(l4fdxc_init_irq);
 L4_EXTERNAL_FUNC(l4fdxc_free);
 L4_EXTERNAL_FUNC(l4fdxc_ping);
 L4_EXTERNAL_FUNC(l4fdxc_obj_size);
@@ -342,7 +342,7 @@ static void do_request(struct request_queue *q)
 		struct l4bd_device *d = req->rq_disk->private_data;
 		int req_id;
 
-		if (req->cmd_type != REQ_TYPE_FS) {
+		if (blk_rq_is_passthrough(req)) {
 			pr_notice("Skip non-CMD request\n");
 			__blk_end_request_all(req, -EIO);
 			continue;
@@ -579,7 +579,7 @@ static int __init l4bd_init(void)
 	if (!srv_conn.fdxcobj)
 		goto out1;
 
-	ret = L4XV_FN_i(l4fdxc_init(fdxcap, &srv_conn.fdxc, srv_conn.fdxcobj));
+	ret = L4XV_FN_i(l4fdxc_init_irq(fdxcap, &srv_conn.fdxc, srv_conn.fdxcobj));
 	if (ret) {
 		pr_err("l4bd: Failed to connect to '%s': %d\n", fdxcap, ret);
 		goto out2;

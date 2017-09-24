@@ -3,17 +3,17 @@
 /*
  * User space memory access functions
  */
-#include <linux/errno.h>
 #include <linux/compiler.h>
 #include <linux/kasan-checks.h>
-#include <linux/thread_info.h>
 #include <linux/string.h>
 #include <asm/asm.h>
 #include <asm/page.h>
 #include <asm/smap.h>
+#include <asm/extable.h>
 
-#define VERIFY_READ 0
-#define VERIFY_WRITE 1
+#ifdef CONFIG_L4
+#include <asm/generic/uaccess.h>
+#endif
 
 /*
  * The fs value determines whether argument validity checking should be
@@ -29,23 +29,14 @@
 #define USER_DS 	MAKE_MM_SEG(TASK_SIZE_MAX)
 
 #define get_ds()	(KERNEL_DS)
-#define get_fs()	(current_thread_info()->addr_limit)
-#define set_fs(x)	(current_thread_info()->addr_limit = (x))
+#define get_fs()	(current->thread.addr_limit)
+#define set_fs(x)	(current->thread.addr_limit = (x))
 
 #define segment_eq(a, b)	((a).seg == (b).seg)
 
-#define user_addr_max() (current_thread_info()->addr_limit.seg)
+#define user_addr_max() (current->thread.addr_limit.seg)
 #define __addr_ok(addr) 	\
 	((unsigned long __force)(addr) < user_addr_max())
-
-#ifdef CONFIG_L4
-#define l4x_copy_to_user       copy_to_user
-#define l4x_copy_from_user     copy_from_user
-#define l4x_clear_user         clear_user
-#define l4x_strncpy_from_user  strncpy_from_user
-#define l4x_strnlen_user       strnlen_user
-#define l4x_strlen_user        strlen_user
-#endif
 
 /*
  * Test whether a block of memory is a valid user space address.
@@ -76,6 +67,12 @@ static inline bool __chk_range_not_ok(unsigned long addr, unsigned long size, un
 	__chk_range_not_ok((unsigned long __force)(addr), size, limit); \
 })
 
+#ifdef CONFIG_DEBUG_ATOMIC_SLEEP
+# define WARN_ON_IN_IRQ()	WARN_ON_ONCE(!in_task())
+#else
+# define WARN_ON_IN_IRQ()
+#endif
+
 /**
  * access_ok: - Checks if a user space pointer is valid
  * @type: Type of access: %VERIFY_READ or %VERIFY_WRITE.  Note that
@@ -96,39 +93,11 @@ static inline bool __chk_range_not_ok(unsigned long addr, unsigned long size, un
  * checks that the pointer is in the user space range - after calling
  * this function, memory access functions may still return -EFAULT.
  */
-#define access_ok(type, addr, size) \
-	likely(!__range_not_ok(addr, size, user_addr_max()))
-
-/*
- * The exception table consists of triples of addresses relative to the
- * exception table entry itself. The first address is of an instruction
- * that is allowed to fault, the second is the target at which the program
- * should continue. The third is a handler function to deal with the fault
- * caused by the instruction in the first field.
- *
- * All the routines below use bits of fixup code that are out of line
- * with the main instruction path.  This means when everything is well,
- * we don't even have to jump over them.  Further, they do not intrude
- * on our cache or tlb entries.
- */
-
-struct exception_table_entry {
-	int insn, fixup, handler;
-};
-
-#define ARCH_HAS_RELATIVE_EXTABLE
-
-#define swap_ex_entry_fixup(a, b, tmp, delta)			\
-	do {							\
-		(a)->fixup = (b)->fixup + (delta);		\
-		(b)->fixup = (tmp).fixup - (delta);		\
-		(a)->handler = (b)->handler + (delta);		\
-		(b)->handler = (tmp).handler - (delta);		\
-	} while (0)
-
-extern int fixup_exception(struct pt_regs *regs, int trapnr);
-extern bool ex_has_fault_handler(unsigned long ip);
-extern void early_fixup_exception(struct pt_regs *regs, int trapnr);
+#define access_ok(type, addr, size)					\
+({									\
+	WARN_ON_IN_IRQ();						\
+	likely(!__range_not_ok(addr, size, user_addr_max()));		\
+})
 
 /*
  * These are the main single-value transfer routines.  They automatically
@@ -145,11 +114,19 @@ extern void early_fixup_exception(struct pt_regs *regs, int trapnr);
  * accesses to the same area of user memory).
  */
 
-extern long __get_user_1(u8  *val, const void *address);
-extern long __get_user_2(u16 *val, const void *address);
-extern long __get_user_4(u32 *val, const void *address);
-extern long __get_user_8(u64 *val, const void *address);
-extern long __get_user_bad(void);
+#ifdef CONFIG_L4
+long __get_user_1(u8  *val, const void *address);
+long __get_user_2(u16 *val, const void *address);
+long __get_user_4(u32 *val, const void *address);
+long __get_user_8(u64 *val, const void *address);
+long __get_user_bad(void);
+#else /* L4 */
+extern int __get_user_1(void);
+extern int __get_user_2(void);
+extern int __get_user_4(void);
+extern int __get_user_8(void);
+extern int __get_user_bad(void);
+#endif
 
 #define __uaccess_begin() stac()
 #define __uaccess_end()   clac()
@@ -192,43 +169,114 @@ __typeof__(__builtin_choose_expr(sizeof(x) > sizeof(0UL), 0ULL, 0UL))
  * Clang/LLVM cares about the size of the register, but still wants
  * the base register for something that ends up being a pair.
  */
+#ifdef CONFIG_L4
+/* We could immitate the original code with some asm too... */
 #define get_user(x, ptr)						\
 ({									\
 	int __ret_gu;							\
- 	unsigned long __val_gu;						\
+	unsigned long __val_gu;						\
 	__chk_user_ptr(ptr);						\
-	switch(sizeof (*(ptr))) {					\
-	case 1:  __ret_gu = __get_user_1((unsigned char      *)&__val_gu,ptr); break;		\
-	case 2:  __ret_gu = __get_user_2((unsigned short     *)&__val_gu,ptr); break;		\
-	case 4:  __ret_gu = __get_user_4((unsigned int       *)&__val_gu,ptr); break;		\
-	case 8:  __ret_gu = __get_user_8((unsigned long long *)&__val_gu,ptr); break;		\
-	default: __ret_gu = __get_user_bad(); break;		\
+	switch (sizeof (*(ptr))) {					\
+	case 1: __ret_gu = __get_user_1((u8  *)&__val_gu,ptr); break;	\
+	case 2: __ret_gu = __get_user_2((u16 *)&__val_gu,ptr); break;	\
+	case 4: __ret_gu = __get_user_4((u32 *)&__val_gu,ptr); break;	\
+	case 8: __ret_gu = __get_user_8((u64 *)&__val_gu,ptr); break;	\
+	default: __ret_gu = __get_user_bad(); break;			\
 	}								\
-	(x) = (__force __typeof__(*(ptr)))__val_gu;				\
+	(x) = (__force __typeof__(*(ptr))) __val_gu;			\
 	__builtin_expect(__ret_gu, 0);					\
 })
-
-#define __get_user_size_ex(x, ptr, size)				\
-do {									\
+#else /* L4 */
+#define get_user(x, ptr)						\
+({									\
+	int __ret_gu;							\
+	register __inttype(*(ptr)) __val_gu asm("%"_ASM_DX);		\
+	register void *__sp asm(_ASM_SP);				\
 	__chk_user_ptr(ptr);						\
-	switch(size) {							\
-	case 1:  __get_user_1((unsigned char      *)&x,ptr); break;		\
-	case 2:  __get_user_2((unsigned short     *)&x,ptr); break;		\
-	case 4:  __get_user_4((unsigned int       *)&x,ptr); break;		\
-	case 8:  __get_user_8((unsigned long long *)&x,ptr); break;		\
-	default: __get_user_bad(); break;			\
-	}								\
-} while (0)
+	might_fault();							\
+	asm volatile("call __get_user_%P4"				\
+		     : "=a" (__ret_gu), "=r" (__val_gu), "+r" (__sp)	\
+		     : "0" (ptr), "i" (sizeof(*(ptr))));		\
+	(x) = (__force __typeof__(*(ptr))) __val_gu;			\
+	__builtin_expect(__ret_gu, 0);					\
+})
+#endif /* L4 */
+
+#ifdef CONFIG_L4
+/* Again, we could imitate this... */
+#define __put_user_x(size, x, ptr, __ret_pu)			\
+	do {							\
+		__chk_user_ptr(ptr);				\
+		switch (size) {					\
+		case 1: __ret_pu = __put_user_1(( u8)(unsigned long)x, ptr); break; \
+		case 2: __ret_pu = __put_user_2((u16)(unsigned long)x, ptr); break; \
+		case 4: __ret_pu = __put_user_4((u32)(unsigned long)x, ptr); break; \
+		case 8: __put_user_8_l4x_wrap(x, ptr, __ret_pu); break;	\
+		default: __put_user_bad(); break;		\
+		}						\
+	} while (0)
+#else /* L4 */
+#define __put_user_x(size, x, ptr, __ret_pu)			\
+	asm volatile("call __put_user_" #size : "=a" (__ret_pu)	\
+		     : "0" ((typeof(*(ptr)))(x)), "c" (ptr) : "ebx")
+#endif /* L4 */
 
 
 
-extern long __put_user_1(u8  val, const void *address);
-extern long __put_user_2(u16 val, const void *address);
-extern long __put_user_4(u32 val, const void *address);
-extern long __put_user_8(u64 val, const void *address);
-extern long __put_user_bad(void);
+#ifndef CONFIG_L4
+#ifdef CONFIG_X86_32
+#define __put_user_asm_u64(x, addr, err, errret)			\
+	asm volatile("\n"						\
+		     "1:	movl %%eax,0(%2)\n"			\
+		     "2:	movl %%edx,4(%2)\n"			\
+		     "3:"						\
+		     ".section .fixup,\"ax\"\n"				\
+		     "4:	movl %3,%0\n"				\
+		     "	jmp 3b\n"					\
+		     ".previous\n"					\
+		     _ASM_EXTABLE(1b, 4b)				\
+		     _ASM_EXTABLE(2b, 4b)				\
+		     : "=r" (err)					\
+		     : "A" (x), "r" (addr), "i" (errret), "0" (err))
 
+#define __put_user_asm_ex_u64(x, addr)					\
+	asm volatile("\n"						\
+		     "1:	movl %%eax,0(%1)\n"			\
+		     "2:	movl %%edx,4(%1)\n"			\
+		     "3:"						\
+		     _ASM_EXTABLE_EX(1b, 2b)				\
+		     _ASM_EXTABLE_EX(2b, 3b)				\
+		     : : "A" (x), "r" (addr))
 
+#define __put_user_x8(x, ptr, __ret_pu)				\
+	asm volatile("call __put_user_8" : "=a" (__ret_pu)	\
+		     : "A" ((typeof(*(ptr)))(x)), "c" (ptr) : "ebx")
+#else
+#define __put_user_asm_u64(x, ptr, retval, errret) \
+	__put_user_asm(x, ptr, retval, "q", "", "er", errret)
+#define __put_user_asm_ex_u64(x, addr)	\
+	__put_user_asm_ex(x, addr, "q", "", "er")
+#define __put_user_x8(x, ptr, __ret_pu) __put_user_x(8, x, ptr, __ret_pu)
+#endif
+#endif /* L4 */
+
+extern void __put_user_bad(void);
+
+/*
+ * Strange magic calling convention: pointer in %ecx,
+ * value in %eax(:%edx), return value in %eax. clobbers %rbx
+ */
+#ifdef CONFIG_L4
+long __put_user_1(u8  val, const void *address);
+long __put_user_2(u16 val, const void *address);
+long __put_user_4(u32 val, const void *address);
+long __put_user_8(u64 val, const void *address);
+#else /* L4 */
+extern void __put_user_1(void);
+extern void __put_user_2(void);
+extern void __put_user_4(void);
+extern void __put_user_8(void);
+#endif /* L4 */
 
 /**
  * put_user: - Write a simple value into user space.
@@ -247,96 +295,348 @@ extern long __put_user_bad(void);
  *
  * Returns zero on success, or -EFAULT on error.
  */
-#if 0
-#define put_user(x,ptr)							\
-  __put_user_check((__typeof__(*(ptr)))(x),(ptr),sizeof(*(ptr)))
+#define put_user(x, ptr)					\
+({								\
+	int __ret_pu;						\
+	__typeof__(*(ptr)) __pu_val;				\
+	__chk_user_ptr(ptr);					\
+	might_fault();						\
+	__pu_val = x;						\
+	__put_user_x(sizeof(*(ptr)), __pu_val, ptr, __ret_pu);	\
+	__builtin_expect(__ret_pu, 0);				\
+})
+
+#ifdef CONFIG_L4
+#define __put_user_size(x, ptr, size, retval, errret)			\
+do {									\
+	retval = 0;							\
+	__chk_user_ptr(ptr);						\
+	__put_user_x(size, x, ptr, retval);				\
+} while (0)
+#else /* L4 */
+#define __put_user_size(x, ptr, size, retval, errret)			\
+do {									\
+	retval = 0;							\
+	__chk_user_ptr(ptr);						\
+	switch (size) {							\
+	case 1:								\
+		__put_user_asm(x, ptr, retval, "b", "b", "iq", errret);	\
+		break;							\
+	case 2:								\
+		__put_user_asm(x, ptr, retval, "w", "w", "ir", errret);	\
+		break;							\
+	case 4:								\
+		__put_user_asm(x, ptr, retval, "l", "k", "ir", errret);	\
+		break;							\
+	case 8:								\
+		__put_user_asm_u64((__typeof__(*ptr))(x), ptr, retval,	\
+				   errret);				\
+		break;							\
+	default:							\
+		__put_user_bad();					\
+	}								\
+} while (0)
+#endif /* L4 */
+
+#ifdef CONFIG_L4
+#ifdef CONFIG_X86_32
+#define __put_user_8_l4x_wrap(x, ptr, retval)				\
+	({ unsigned long dummy;						\
+	 __asm__ __volatile__ (						\
+		"call __put_user_8"					\
+		: "=a" (retval), "=d" (dummy), "=c" (dummy)		\
+		: "A" (x), "c" (ptr));					\
+	});
+#else
+#define __put_user_8_l4x_wrap(x, ptr, retval)				\
+	retval = __put_user_8((u64)x, ptr);
 #endif
+#endif /* L4 */
 
 /*
- * To avoid warnings from the compiler (in case we want to cast a pointer to
- * u64) we use this dirty asm wrapper trick.
+ * This doesn't do __uaccess_begin/end - the exception handling
+ * around it must do that.
  */
-#ifdef CONFIG_X86_32
-#define __put_user_8_wrap(x, addr, retval)				\
-	({ unsigned long dummy;                                         \
-	__asm__ __volatile__ (						\
-		"call __put_user_8	\n\t"				\
-		: "=a" (retval), "=d" (dummy), "=c" (dummy)		\
-		: "A" (x), "c" (addr));                                 \
-	 })
-#else
-#define __put_user_8_wrap(x, addr, retval)				\
-        retval = __put_user_8((u64)x,addr);
-#endif
-
-#define put_user_macro(x,ptr)						\
-	({								\
-	int __ret_pu;							\
-	__typeof__(*(ptr)) __pu_val;					\
+#ifdef CONFIG_L4
+#define __put_user_size_ex(x, ptr, size)				\
+do {									\
+	long retval = 0;							\
 	__chk_user_ptr(ptr);						\
-	__pu_val = (__typeof__(*(ptr)))(x);							\
-	switch (sizeof(*(ptr))) {					\
-	case 1:  __ret_pu = __put_user_1(( u8)((unsigned long)__pu_val),ptr); break; \
-	case 2:  __ret_pu = __put_user_2((u16)((unsigned long)__pu_val),ptr); break; \
-	case 4:  __ret_pu = __put_user_4((u32)((unsigned long)__pu_val),ptr); break; \
-	case 8:  __put_user_8_wrap((__pu_val), ptr, __ret_pu); break; \
-	default: __ret_pu = __put_user_bad(); break;			\
+	__put_user_x(size, x, ptr, retval);				\
+} while (0)
+#else /* L4 */
+#define __put_user_size_ex(x, ptr, size)				\
+do {									\
+	__chk_user_ptr(ptr);						\
+	switch (size) {							\
+	case 1:								\
+		__put_user_asm_ex(x, ptr, "b", "b", "iq");		\
+		break;							\
+	case 2:								\
+		__put_user_asm_ex(x, ptr, "w", "w", "ir");		\
+		break;							\
+	case 4:								\
+		__put_user_asm_ex(x, ptr, "l", "k", "ir");		\
+		break;							\
+	case 8:								\
+		__put_user_asm_ex_u64((__typeof__(*ptr))(x), ptr);	\
+		break;							\
+	default:							\
+		__put_user_bad();					\
 	}								\
-	__ret_pu;							\
-	})
-	
+} while (0)
+#endif /* L4 */
 
-#define __get_user get_user
-#define __put_user(x,ptr) put_user_macro((__typeof__(*(ptr)))(x), (ptr))
-#define put_user put_user_macro
+#ifndef CONFIG_L4
+#ifdef CONFIG_X86_32
+#define __get_user_asm_u64(x, ptr, retval, errret)			\
+({									\
+	__typeof__(ptr) __ptr = (ptr);					\
+	asm volatile("\n"					\
+		     "1:	movl %2,%%eax\n"			\
+		     "2:	movl %3,%%edx\n"			\
+		     "3:\n"				\
+		     ".section .fixup,\"ax\"\n"				\
+		     "4:	mov %4,%0\n"				\
+		     "	xorl %%eax,%%eax\n"				\
+		     "	xorl %%edx,%%edx\n"				\
+		     "	jmp 3b\n"					\
+		     ".previous\n"					\
+		     _ASM_EXTABLE(1b, 4b)				\
+		     _ASM_EXTABLE(2b, 4b)				\
+		     : "=r" (retval), "=&A"(x)				\
+		     : "m" (__m(__ptr)), "m" __m(((u32 *)(__ptr)) + 1),	\
+		       "i" (errret), "0" (retval));			\
+})
 
-#define __get_user_unaligned __get_user
-#define __put_user_unaligned __put_user
+#define __get_user_asm_ex_u64(x, ptr)			(x) = __get_user_bad()
+#else
+#define __get_user_asm_u64(x, ptr, retval, errret) \
+	 __get_user_asm(x, ptr, retval, "q", "", "=r", errret)
+#define __get_user_asm_ex_u64(x, ptr) \
+	 __get_user_asm_ex(x, ptr, "q", "", "=r")
+#endif
+#endif /* L4 */
 
+#ifdef CONFIG_L4
+#define __get_user_size(x, ptr, size, retval, errret)			\
+do {									\
+	retval = 0;							\
+	__chk_user_ptr(ptr);						\
+	switch (size) {							\
+	case 1:								\
+		retval = __get_user_1((u8 *)&x, ptr);			\
+		break;							\
+	case 2:								\
+		retval = __get_user_2((u16 *)&x, ptr);			\
+		break;							\
+	case 4:								\
+		retval = __get_user_4((u32 *)&x, ptr);			\
+		break;							\
+	case 8:								\
+		retval = __get_user_8((u64 *)&x, ptr);			\
+		break;							\
+	default:							\
+		(x) = __get_user_bad();					\
+	}								\
+} while (0)
+#else /* L4 */
+#define __get_user_size(x, ptr, size, retval, errret)			\
+do {									\
+	retval = 0;							\
+	__chk_user_ptr(ptr);						\
+	switch (size) {							\
+	case 1:								\
+		__get_user_asm(x, ptr, retval, "b", "b", "=q", errret);	\
+		break;							\
+	case 2:								\
+		__get_user_asm(x, ptr, retval, "w", "w", "=r", errret);	\
+		break;							\
+	case 4:								\
+		__get_user_asm(x, ptr, retval, "l", "k", "=r", errret);	\
+		break;							\
+	case 8:								\
+		__get_user_asm_u64(x, ptr, retval, errret);		\
+		break;							\
+	default:							\
+		(x) = __get_user_bad();					\
+	}								\
+} while (0)
+#endif /* L4 */
+
+#ifndef CONFIG_L4
+#define __get_user_asm(x, addr, err, itype, rtype, ltype, errret)	\
+	asm volatile("\n"						\
+		     "1:	mov"itype" %2,%"rtype"1\n"		\
+		     "2:\n"						\
+		     ".section .fixup,\"ax\"\n"				\
+		     "3:	mov %3,%0\n"				\
+		     "	xor"itype" %"rtype"1,%"rtype"1\n"		\
+		     "	jmp 2b\n"					\
+		     ".previous\n"					\
+		     _ASM_EXTABLE(1b, 3b)				\
+		     : "=r" (err), ltype(x)				\
+		     : "m" (__m(addr)), "i" (errret), "0" (err))
+
+#define __get_user_asm_nozero(x, addr, err, itype, rtype, ltype, errret)	\
+	asm volatile("\n"						\
+		     "1:	mov"itype" %2,%"rtype"1\n"		\
+		     "2:\n"						\
+		     ".section .fixup,\"ax\"\n"				\
+		     "3:	mov %3,%0\n"				\
+		     "	jmp 2b\n"					\
+		     ".previous\n"					\
+		     _ASM_EXTABLE(1b, 3b)				\
+		     : "=r" (err), ltype(x)				\
+		     : "m" (__m(addr)), "i" (errret), "0" (err))
+#endif /* L4 */
+
+/*
+ * This doesn't do __uaccess_begin/end - the exception handling
+ * around it must do that.
+ */
+#ifdef CONFIG_L4
+#define __get_user_size_ex(x, ptr, size)				\
+do {									\
+	__chk_user_ptr(ptr);						\
+	switch (size) {							\
+	case 1:								\
+		__get_user_1((u8  *)&x, ptr);				\
+		break;							\
+	case 2:								\
+		__get_user_2((u16 *)&x, ptr);				\
+		break;							\
+	case 4:								\
+		__get_user_4((u32 *)&x, ptr);				\
+		break;							\
+	case 8:								\
+		__get_user_8((u64 *)&x, ptr);				\
+		break;							\
+	default:							\
+		(x) = __get_user_bad();					\
+	}								\
+} while (0)
+#else /* L4 */
+#define __get_user_size_ex(x, ptr, size)				\
+do {									\
+	__chk_user_ptr(ptr);						\
+	switch (size) {							\
+	case 1:								\
+		__get_user_asm_ex(x, ptr, "b", "b", "=q");		\
+		break;							\
+	case 2:								\
+		__get_user_asm_ex(x, ptr, "w", "w", "=r");		\
+		break;							\
+	case 4:								\
+		__get_user_asm_ex(x, ptr, "l", "k", "=r");		\
+		break;							\
+	case 8:								\
+		__get_user_asm_ex_u64(x, ptr);				\
+		break;							\
+	default:							\
+		(x) = __get_user_bad();					\
+	}								\
+} while (0)
+#endif /* L4 */
+
+#ifndef CONFIG_L4
+#define __get_user_asm_ex(x, addr, itype, rtype, ltype)			\
+	asm volatile("1:	mov"itype" %1,%"rtype"0\n"		\
+		     "2:\n"						\
+		     ".section .fixup,\"ax\"\n"				\
+                     "3:xor"itype" %"rtype"0,%"rtype"0\n"		\
+		     "  jmp 2b\n"					\
+		     ".previous\n"					\
+		     _ASM_EXTABLE_EX(1b, 3b)				\
+		     : ltype(x) : "m" (__m(addr)))
+#endif /* L4 */
+
+#define __put_user_nocheck(x, ptr, size)			\
+({								\
+	int __pu_err;						\
+	__uaccess_begin();					\
+	__put_user_size((x), (ptr), (size), __pu_err, -EFAULT);	\
+	__uaccess_end();					\
+	__builtin_expect(__pu_err, 0);				\
+})
+
+#define __get_user_nocheck(x, ptr, size)				\
+({									\
+	int __gu_err;							\
+	__inttype(*(ptr)) __gu_val;					\
+	__uaccess_begin();						\
+	__get_user_size(__gu_val, (ptr), (size), __gu_err, -EFAULT);	\
+	__uaccess_end();						\
+	(x) = (__force __typeof__(*(ptr)))__gu_val;			\
+	__builtin_expect(__gu_err, 0);					\
+})
+
+/* FIXME: this hack is definitely wrong -AK */
 struct __large_struct { unsigned long buf[100]; };
 #define __m(x) (*(struct __large_struct __user *)(x))
 
+/*
+ * Tell gcc we read from memory instead of writing: this is because
+ * we do not write to any memory gcc knows about, so there are no
+ * aliasing issues.
+ */
+#ifndef CONFIG_L4
+#define __put_user_asm(x, addr, err, itype, rtype, ltype, errret)	\
+	asm volatile("\n"						\
+		     "1:	mov"itype" %"rtype"1,%2\n"		\
+		     "2:\n"						\
+		     ".section .fixup,\"ax\"\n"				\
+		     "3:	mov %3,%0\n"				\
+		     "	jmp 2b\n"					\
+		     ".previous\n"					\
+		     _ASM_EXTABLE(1b, 3b)				\
+		     : "=r"(err)					\
+		     : ltype(x), "m" (__m(addr)), "i" (errret), "0" (err))
+
+#define __put_user_asm_ex(x, addr, itype, rtype, ltype)			\
+	asm volatile("1:	mov"itype" %"rtype"0,%1\n"		\
+		     "2:\n"						\
+		     _ASM_EXTABLE_EX(1b, 2b)				\
+		     : : ltype(x), "m" (__m(addr)))
+#endif /* L4 */
 
 /*
  * uaccess_try and catch
  */
 #define uaccess_try	do {						\
-	current_thread_info()->uaccess_err = 0;				\
+	current->thread.uaccess_err = 0;				\
 	__uaccess_begin();						\
 	barrier();
 
 #define uaccess_catch(err)						\
 	__uaccess_end();						\
-	(err) |= (current_thread_info()->uaccess_err ? -EFAULT : 0);	\
+	(err) |= (current->thread.uaccess_err ? -EFAULT : 0);		\
 } while (0)
 
-
-#define __copy_to_user copy_to_user
-#define __copy_from_user copy_from_user
-#define __copy_to_user_inatomic copy_to_user
-#define __copy_from_user_inatomic __copy_from_user
-
-unsigned long __must_check __copy_to_user_ll
-		(void __user *to, const void *from, unsigned long n);
-unsigned long __must_check __copy_from_user_ll
-		(void *to, const void __user *from, unsigned long n);
-
 /**
- * Here we special-case 1, 2 and 4-byte copy_*_user invocations.  On a fault
- * we return the initial request size (1, 2 or 4), as copy_*_user should do.
- * If a store crosses a page boundary and gets a fault, the x86 will not write
- * anything, so this is accurate.
+ * __get_user: - Get a simple variable from user space, with less checking.
+ * @x:   Variable to store result.
+ * @ptr: Source address, in user space.
+ *
+ * Context: User context only. This function may sleep if pagefaults are
+ *          enabled.
+ *
+ * This macro copies a single simple variable from user space to kernel
+ * space.  It supports simple types like char and int, but not larger
+ * data types like structures or arrays.
+ *
+ * @ptr must have pointer-to-simple-variable type, and the result of
+ * dereferencing @ptr must be assignable to @x without a cast.
+ *
+ * Caller must check the pointer with access_ok() before calling this
+ * function.
+ *
+ * Returns zero on success, or -EFAULT on error.
+ * On error, the variable @x is set to zero.
  */
 
-unsigned long __must_check copy_to_user(void __user *to,
-					const void *from, unsigned long n);
-unsigned long __must_check copy_from_user(void *to,
-					  const void __user *from,
-					  unsigned long n);
-long __must_check strncpy_from_user(char *dst, const char __user *src,
-				    long count);
-long __must_check __strncpy_from_user(char *dst,
-				      const char __user *src, long count);
+#define __get_user(x, ptr)						\
+	__get_user_nocheck((x), (ptr), sizeof(*(ptr)))
 
 /**
  * __put_user: - Write a simple value into user space, with less checking.
@@ -359,9 +659,11 @@ long __must_check __strncpy_from_user(char *dst,
  * Returns zero on success, or -EFAULT on error.
  */
 
-unsigned long __must_check clear_user(void __user *mem, unsigned long len);
-unsigned long __must_check __clear_user(void __user *mem, unsigned long len);
+#define __put_user(x, ptr)						\
+	__put_user_nocheck((__typeof__(*(ptr)))(x), (ptr), sizeof(*(ptr)))
 
+#define __get_user_unaligned __get_user
+#define __put_user_unaligned __put_user
 
 /*
  * {get|put}_user_try and catch
@@ -379,31 +681,57 @@ unsigned long __must_check __clear_user(void __user *mem, unsigned long len);
 	(x) = (__force __typeof__(*(ptr)))__gue_val;			\
 } while (0)
 
-#define put_user_try		do {		\
-	int __uaccess_err = 0;
+#define put_user_try		uaccess_try
+#define put_user_catch(err)	uaccess_catch(err)
 
-#define put_user_catch(err)			\
-	(err) |= __uaccess_err;			\
-} while (0)
-
-#define put_user_ex(x, ptr)	do {		\
-	__uaccess_err |= __put_user(x, ptr);	\
-} while (0)
+#define put_user_ex(x, ptr)						\
+	__put_user_size_ex((__typeof__(*(ptr)))(x), (ptr), sizeof(*(ptr)))
 
 extern unsigned long
 copy_from_user_nmi(void *to, const void __user *from, unsigned long n);
+#ifdef CONFIG_L4
+static inline __must_check long
+strncpy_from_user(char *dst, const char __user *src, long count)
+{
+	return l4x_strncpy_from_user(dst, src, count);
+}
+#else /* L4 */
 extern __must_check long
 strncpy_from_user(char *dst, const char __user *src, long count);
+#endif /* L4 */
 
+#ifdef CONFIG_L4
+static inline __must_check long strlen_user(const char __user *str)
+{
+	return l4x_strlen_user(str);
+}
+static inline __must_check long strnlen_user(const char __user *str, long n)
+{
+	return l4x_strnlen_user(str, n);
+}
+#else /* L4 */
 extern __must_check long strlen_user(const char __user *str);
 extern __must_check long strnlen_user(const char __user *str, long n);
+#endif /* L4 */
 
+#ifdef CONFIG_L4
+static inline unsigned long __must_check
+clear_user(void __user *mem, unsigned long len)
+{
+	return l4x_clear_user(mem, len);
+}
+#else
 unsigned long __must_check clear_user(void __user *mem, unsigned long len);
+#endif
 unsigned long __must_check __clear_user(void __user *mem, unsigned long len);
 
 extern void __cmpxchg_wrong_size(void)
 	__compiletime_error("Bad argument size for cmpxchg");
 
+#ifndef CONFIG_L4
+#define __user_atomic_cmpxchg_inatomic(uval, ptr, old, new, size)	\
+	do { BUG(); } while (0)
+#else
 #define __user_atomic_cmpxchg_inatomic(uval, ptr, old, new, size)	\
 ({									\
 	int __ret = 0;							\
@@ -486,6 +814,7 @@ extern void __cmpxchg_wrong_size(void)
 	*__uval = __old;						\
 	__ret;								\
 })
+#endif /* L4 */
 
 #define user_atomic_cmpxchg_inatomic(uval, ptr, old, new)		\
 ({									\
@@ -504,128 +833,53 @@ extern struct movsl_mask {
 } ____cacheline_aligned_in_smp movsl_mask;
 #endif
 
-#ifndef CONFIG_L4
-
 #define ARCH_HAS_NOCACHE_UACCESS 1
 
+#ifdef CONFIG_L4
+static __always_inline unsigned long
+raw_copy_from_user(void *to, const void __user *from, unsigned long n)
+{
+	return l4x_copy_from_user(to, from, n);
+}
+
+static __always_inline __must_check unsigned long
+raw_copy_to_user(void __user *dst, const void *src, unsigned long size)
+{
+	return l4x_copy_to_user(dst, src, size);
+}
+
+static __always_inline unsigned long
+__copy_from_user_inatomic_nocache(void *to, const void __user *from,
+                                  unsigned long n)
+{
+	return l4x_copy_from_user(to, from, n);
+}
+
+#ifdef CONFIG_X86_64
+__must_check long
+raw_copy_in_user(void __user *dst, const void __user *src, unsigned long size);
+
+extern long __copy_user_nocache(void *dst, const void __user *src,
+                                unsigned size, int zerorest);
+
+extern long __copy_user_flushcache(void *dst, const void __user *src, unsigned size);
+extern void memcpy_page_flushcache(char *to, struct page *page, size_t offset,
+				   size_t len);
+
+static inline int
+__copy_from_user_flushcache(void *dst, const void __user *src, unsigned size)
+{
+	kasan_check_write(dst, size);
+	return __copy_user_flushcache(dst, src, size);
+}
+#endif
+
+#else /* L4 */
 #ifdef CONFIG_X86_32
 # include <asm/uaccess_32.h>
 #else
 # include <asm/uaccess_64.h>
 #endif
-
-unsigned long __must_check _copy_from_user(void *to, const void __user *from,
-					   unsigned n);
-unsigned long __must_check _copy_to_user(void __user *to, const void *from,
-					 unsigned n);
-
-#ifdef CONFIG_DEBUG_STRICT_USER_COPY_CHECKS
-# define copy_user_diag __compiletime_error
-#else
-# define copy_user_diag __compiletime_warning
-#endif
-
-extern void copy_user_diag("copy_from_user() buffer size is too small")
-copy_from_user_overflow(void);
-extern void copy_user_diag("copy_to_user() buffer size is too small")
-copy_to_user_overflow(void) __asm__("copy_from_user_overflow");
-
-#undef copy_user_diag
-
-#ifdef CONFIG_DEBUG_STRICT_USER_COPY_CHECKS
-
-extern void
-__compiletime_warning("copy_from_user() buffer size is not provably correct")
-__copy_from_user_overflow(void) __asm__("copy_from_user_overflow");
-#define __copy_from_user_overflow(size, count) __copy_from_user_overflow()
-
-extern void
-__compiletime_warning("copy_to_user() buffer size is not provably correct")
-__copy_to_user_overflow(void) __asm__("copy_from_user_overflow");
-#define __copy_to_user_overflow(size, count) __copy_to_user_overflow()
-
-#else
-
-static inline void
-__copy_from_user_overflow(int size, unsigned long count)
-{
-	WARN(1, "Buffer overflow detected (%d < %lu)!\n", size, count);
-}
-
-#define __copy_to_user_overflow __copy_from_user_overflow
-
-#endif
-
-static inline unsigned long __must_check
-copy_from_user(void *to, const void __user *from, unsigned long n)
-{
-	int sz = __compiletime_object_size(to);
-
-	might_fault();
-
-	kasan_check_write(to, n);
-
-	/*
-	 * While we would like to have the compiler do the checking for us
-	 * even in the non-constant size case, any false positives there are
-	 * a problem (especially when DEBUG_STRICT_USER_COPY_CHECKS, but even
-	 * without - the [hopefully] dangerous looking nature of the warning
-	 * would make people go look at the respecitive call sites over and
-	 * over again just to find that there's no problem).
-	 *
-	 * And there are cases where it's just not realistic for the compiler
-	 * to prove the count to be in range. For example when multiple call
-	 * sites of a helper function - perhaps in different source files -
-	 * all doing proper range checking, yet the helper function not doing
-	 * so again.
-	 *
-	 * Therefore limit the compile time checking to the constant size
-	 * case, and do only runtime checking for non-constant sizes.
-	 */
-
-	if (likely(sz < 0 || sz >= n))
-		n = _copy_from_user(to, from, n);
-	else if(__builtin_constant_p(n))
-		copy_from_user_overflow();
-	else
-		__copy_from_user_overflow(sz, n);
-
-	return n;
-}
-
-static inline unsigned long __must_check
-copy_to_user(void __user *to, const void *from, unsigned long n)
-{
-	int sz = __compiletime_object_size(from);
-
-	kasan_check_read(from, n);
-
-	might_fault();
-
-	/* See the comment in copy_from_user() above. */
-	if (likely(sz < 0 || sz >= n))
-		n = _copy_to_user(to, from, n);
-	else if(__builtin_constant_p(n))
-		copy_to_user_overflow();
-	else
-		__copy_to_user_overflow(sz, n);
-
-	return n;
-}
-
-#undef __copy_from_user_overflow
-#undef __copy_to_user_overflow
-
-#else
-
-#ifdef CONFIG_X86_64
-__must_check int
-__copy_in_user(void __user *dst, const void __user *src, unsigned size);
-
-__must_check unsigned long
-copy_in_user(void __user *to, const void __user *from, unsigned len);
-#endif /* X86_64 */
-
 #endif /* L4 */
 
 /*
@@ -646,28 +900,22 @@ copy_in_user(void __user *to, const void __user *from, unsigned len);
 #define user_access_begin()	__uaccess_begin()
 #define user_access_end()	__uaccess_end()
 
-#define unsafe_put_user(x, ptr)						\
-({										\
+#define unsafe_put_user(x, ptr, err_label)					\
+do {										\
 	int __pu_err;								\
-	__put_user_size((x), (ptr), sizeof(*(ptr)), __pu_err, -EFAULT);		\
-	__builtin_expect(__pu_err, 0);						\
-})
+	__typeof__(*(ptr)) __pu_val = (x);					\
+	__put_user_size(__pu_val, (ptr), sizeof(*(ptr)), __pu_err, -EFAULT);	\
+	if (unlikely(__pu_err)) goto err_label;					\
+} while (0)
 
-#define unsafe_get_user(x, ptr)						\
-({										\
+#define unsafe_get_user(x, ptr, err_label)					\
+do {										\
 	int __gu_err;								\
-	unsigned long __gu_val;							\
+	__inttype(*(ptr)) __gu_val;						\
 	__get_user_size(__gu_val, (ptr), sizeof(*(ptr)), __gu_err, -EFAULT);	\
 	(x) = (__force __typeof__(*(ptr)))__gu_val;				\
-	__builtin_expect(__gu_err, 0);						\
-})
+	if (unlikely(__gu_err)) goto err_label;					\
+} while (0)
 
-#ifdef CONFIG_L4
-#ifdef CONFIG_X86_64
-extern long __copy_user_nocache(void *dst, const void __user *src,
-                                unsigned size, int zerorest);
-#endif
-#endif
-
-#endif
+#endif /* _ASM_X86_UACCESS_H */
 

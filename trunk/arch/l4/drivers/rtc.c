@@ -25,8 +25,7 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/workqueue.h>
-
-#include <asm-generic/rtc.h>
+#include <linux/mc146818rtc.h>
 
 #include <asm/generic/util.h>
 #include <asm/generic/cap_alloc.h>

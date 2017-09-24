@@ -9,7 +9,9 @@
 #endif
 
 #ifdef CONFIG_X86_64
-#define L4_ENTER_KERNEL "syscall\n\t"
+#ifndef L4_ENTER_KERNEL
+#define L4_ENTER_KERNEL "syscall"
+#endif
 #endif
 
 #ifdef CONFIG_X86_64
@@ -24,9 +26,8 @@ static inline void l4x_tamed_sem_down(void)
 	unsigned dummy1;
 #endif
 	unsigned dummy2, dummy3;
-	struct thread_info *ti = current_thread_info_stack();
-	unsigned cpu = ti->cpu;
-	l4_utcb_t *utcb = l4x_utcb_current(ti);
+	unsigned cpu = smp_processor_id();
+	l4_utcb_t *utcb = l4x_utcb_current();
 
 	asm volatile
 	  (
@@ -48,7 +49,7 @@ static inline void l4x_tamed_sem_down(void)
 	   "xor     %%ecx,%%ecx        \n\t"        /* timeout never */
 #endif
 
-	   L4_ENTER_KERNEL
+	   L4_ENTER_KERNEL            "\n\t"
 
 	   "test    $0x00010000, %%" R "ax  \n\t"        /* Check return tag */
 
@@ -83,9 +84,8 @@ static inline void l4x_tamed_sem_up(void)
 	unsigned dummy1;
 #endif
 	unsigned dummy2, dummy3, dummy4;
-	struct thread_info *ti = current_thread_info_stack();
-	unsigned cpu = ti->cpu;
-	l4_utcb_t *utcb = l4x_utcb_current(ti);
+	unsigned cpu = smp_processor_id();
+	l4_utcb_t *utcb = l4x_utcb_current();
 	l4_msgtag_t rtag;
 #ifdef CONFIG_X86_64
 	register l4_umword_t to __asm__("r8") = 0;
@@ -97,7 +97,7 @@ static inline void l4x_tamed_sem_up(void)
 	   "incl    0(%%" R "bx)       \n\t"        /* increment counter */
 	   "jg      2f                 \n\t"
 
-	   L4_ENTER_KERNEL
+	   L4_ENTER_KERNEL            "\n\t"
 
 	   "2:                         \n\t"
 	   : "=a" (rtag),

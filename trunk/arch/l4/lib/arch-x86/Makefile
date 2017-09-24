@@ -25,12 +25,13 @@ KBUILD_CFLAGS += -Iarch/x86/lib
 KBUILD_CFLAGS += -Iarch/l4/lib/arch-x86
 
 lib-y := delay.o misc.o cmdline.o cpu.o
-lib-y += usercopy.o
+lib-y += usercopy_$(BITS).o usercopy.o
 lib-y += memcpy_$(BITS).o
 lib-$(CONFIG_RWSEM_XCHGADD_ALGORITHM) += rwsem.o
 lib-$(CONFIG_INSTRUCTION_DECODER) += insn.o inat.o
+lib-$(CONFIG_RANDOMIZE_BASE) += kaslr.o
 
-obj-y += msr.o msr-reg.o msr-reg-export.o
+obj-y += msr.o msr-reg.o msr-reg-export.o hweight.o
 
 ifeq ($(CONFIG_X86_32),y)
         obj-y += atomic64_32.o
@@ -60,7 +61,7 @@ obj-$(CONFIG_L4_DEBUG) += ../debugfs.o
 include arch/l4/Makefile.lib
 
 $(call L4X_FILEREF, $(b),                                     \
-       atomic64_32 cache-smp cmpxchg16b_emu hash              \
+       atomic64_32 cache-smp cmpxchg16b_emu hash hweight      \
        iomap_copy_64 misc msr msr-reg msr-reg-export msr-smp)
 
 lib-y := $(call L4X_PREFIX_IF, $(b), $(lib-y),                  \

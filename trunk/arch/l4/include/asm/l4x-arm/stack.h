@@ -2,7 +2,8 @@
 
 #include <asm/thread_info.h>
 
-static inline struct thread_info *current_thread_info_stack(void)
+static inline
+unsigned long l4x_current_stack_pointer(void)
 {
-	return current_thread_info();
+	return current_stack_pointer;
 }

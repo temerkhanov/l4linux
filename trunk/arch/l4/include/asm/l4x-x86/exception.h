@@ -142,6 +142,7 @@ void utcb_exc_to_ptregs(l4_exc_regs_t *exc, struct pt_regs *ptregs)
 	ptregs->ip    = exc->ip;
 	ptregs->flags = exc->flags | X86_EFLAGS_IF;
 	ptregs->sp    = exc->sp;
+	ptregs->ss    = exc->ss;
 #ifdef CONFIG_X86_32
 	ptregs->fs    = exc->fs;
 	ptregs->gs    = exc->gs;
@@ -170,6 +171,7 @@ void ptregs_to_utcb_exc(struct pt_regs *ptregs, l4_exc_regs_t *exc)
 	exc->ip     = ptregs->ip;
 	exc->flags  = ptregs->flags;
 	exc->sp     = ptregs->sp;
+	exc->ss     = ptregs->ss;
 #ifdef CONFIG_X86_32
 	exc->fs     = ptregs->fs;
 #else

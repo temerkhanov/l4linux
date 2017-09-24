@@ -23,7 +23,7 @@
 #include <linux/bootmem.h>
 #include <linux/ftrace.h>
 #include <linux/ioport.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/syscore_ops.h>
 #include <linux/delay.h>
 #include <linux/timex.h>
@@ -48,13 +48,14 @@
 #include <asm/io_apic.h>
 #include <asm/desc.h>
 #include <asm/hpet.h>
-#include <asm/idle.h>
 #include <asm/mtrr.h>
 #include <asm/time.h>
 #include <asm/smp.h>
 #include <asm/mce.h>
 #include <asm/tsc.h>
 #include <asm/hypervisor.h>
+#include <asm/cpu_device_id.h>
+#include <asm/intel-family.h>
 
 #ifdef CONFIG_L4
 #include <asm/generic/smp_id.h>
@@ -67,6 +68,8 @@ unsigned disabled_cpus;
 /* Processor that is doing the boot up */
 unsigned int boot_cpu_physical_apicid = -1U;
 EXPORT_SYMBOL_GPL(boot_cpu_physical_apicid);
+
+u8 boot_cpu_apic_version;
 
 /*
  * The highest APIC ID seen during enumeration.
@@ -96,8 +99,10 @@ static int apic_extnmi = APIC_EXTNMI_BSP;
  */
 DEFINE_EARLY_PER_CPU_READ_MOSTLY(u16, x86_cpu_to_apicid, BAD_APICID);
 DEFINE_EARLY_PER_CPU_READ_MOSTLY(u16, x86_bios_cpu_apicid, BAD_APICID);
+DEFINE_EARLY_PER_CPU_READ_MOSTLY(u32, x86_cpu_to_acpiid, U32_MAX);
 EXPORT_EARLY_PER_CPU_SYMBOL(x86_cpu_to_apicid);
 EXPORT_EARLY_PER_CPU_SYMBOL(x86_bios_cpu_apicid);
+EXPORT_EARLY_PER_CPU_SYMBOL(x86_cpu_to_acpiid);
 
 #ifdef CONFIG_X86_32
 
@@ -149,7 +154,7 @@ static int force_enable_local_apic __initdata;
  */
 static int __init parse_lapic(char *arg)
 {
-	if (config_enabled(CONFIG_X86_32) && !arg)
+	if (IS_ENABLED(CONFIG_X86_32) && !arg)
 		force_enable_local_apic = 1;
 	else if (arg && !strncmp(arg, "notscdeadline", 13))
 		setup_clear_cpu_cap(X86_FEATURE_TSC_DEADLINE_TIMER);
@@ -324,7 +329,7 @@ int lapic_get_maxlvt(void)
 #ifndef CONFIG_L4
 /* Clock divisor */
 #define APIC_DIVISOR 16
-#define TSC_DIVISOR  32
+#define TSC_DIVISOR  8
 
 /*
  * This function sets up the local APIC timer, with a timeout of
@@ -545,21 +550,97 @@ static void lapic_timer_broadcast(const struct cpumask *mask)
  * The local apic timer can be used for any function which is CPU local.
  */
 static struct clock_event_device lapic_clockevent = {
-	.name			= "lapic",
-	.features		= CLOCK_EVT_FEAT_PERIODIC |
-				  CLOCK_EVT_FEAT_ONESHOT | CLOCK_EVT_FEAT_C3STOP
-				  | CLOCK_EVT_FEAT_DUMMY,
-	.shift			= 32,
-	.set_state_shutdown	= lapic_timer_shutdown,
-	.set_state_periodic	= lapic_timer_set_periodic,
-	.set_state_oneshot	= lapic_timer_set_oneshot,
-	.set_next_event		= lapic_next_event,
-	.broadcast		= lapic_timer_broadcast,
-	.rating			= 100,
-	.irq			= -1,
+	.name				= "lapic",
+	.features			= CLOCK_EVT_FEAT_PERIODIC |
+					  CLOCK_EVT_FEAT_ONESHOT | CLOCK_EVT_FEAT_C3STOP
+					  | CLOCK_EVT_FEAT_DUMMY,
+	.shift				= 32,
+	.set_state_shutdown		= lapic_timer_shutdown,
+	.set_state_periodic		= lapic_timer_set_periodic,
+	.set_state_oneshot		= lapic_timer_set_oneshot,
+	.set_state_oneshot_stopped	= lapic_timer_shutdown,
+	.set_next_event			= lapic_next_event,
+	.broadcast			= lapic_timer_broadcast,
+	.rating				= 100,
+	.irq				= -1,
 };
 static DEFINE_PER_CPU(struct clock_event_device, lapic_events);
 #endif /* L4 */
+
+#define DEADLINE_MODEL_MATCH_FUNC(model, func)	\
+	{ X86_VENDOR_INTEL, 6, model, X86_FEATURE_ANY, (unsigned long)&func }
+
+#define DEADLINE_MODEL_MATCH_REV(model, rev)	\
+	{ X86_VENDOR_INTEL, 6, model, X86_FEATURE_ANY, (unsigned long)rev }
+
+static u32 hsx_deadline_rev(void)
+{
+	switch (boot_cpu_data.x86_mask) {
+	case 0x02: return 0x3a; /* EP */
+	case 0x04: return 0x0f; /* EX */
+	}
+
+	return ~0U;
+}
+
+static u32 bdx_deadline_rev(void)
+{
+	switch (boot_cpu_data.x86_mask) {
+	case 0x02: return 0x00000011;
+	case 0x03: return 0x0700000e;
+	case 0x04: return 0x0f00000c;
+	case 0x05: return 0x0e000003;
+	}
+
+	return ~0U;
+}
+
+static const struct x86_cpu_id deadline_match[] = {
+	DEADLINE_MODEL_MATCH_FUNC( INTEL_FAM6_HASWELL_X,	hsx_deadline_rev),
+	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_BROADWELL_X,	0x0b000020),
+	DEADLINE_MODEL_MATCH_FUNC( INTEL_FAM6_BROADWELL_XEON_D,	bdx_deadline_rev),
+	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_SKYLAKE_X,	0x02000014),
+
+	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_HASWELL_CORE,	0x22),
+	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_HASWELL_ULT,	0x20),
+	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_HASWELL_GT3E,	0x17),
+
+	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_BROADWELL_CORE,	0x25),
+	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_BROADWELL_GT3E,	0x17),
+
+	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_SKYLAKE_MOBILE,	0xb2),
+	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_SKYLAKE_DESKTOP,	0xb2),
+
+	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_KABYLAKE_MOBILE,	0x52),
+	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_KABYLAKE_DESKTOP,	0x52),
+
+	{},
+};
+
+static void apic_check_deadline_errata(void)
+{
+	const struct x86_cpu_id *m = x86_match_cpu(deadline_match);
+	u32 rev;
+
+	if (!m)
+		return;
+
+	/*
+	 * Function pointers will have the MSB set due to address layout,
+	 * immediate revisions will not.
+	 */
+	if ((long)m->driver_data < 0)
+		rev = ((u32 (*)(void))(m->driver_data))();
+	else
+		rev = (u32)m->driver_data;
+
+	if (boot_cpu_data.microcode >= rev)
+		return;
+
+	setup_clear_cpu_cap(X86_FEATURE_TSC_DEADLINE_TIMER);
+	pr_err(FW_BUG "TSC_DEADLINE disabled due to Errata; "
+	       "please update microcode to version: 0x%x (or later)\n", rev);
+}
 
 /*
  * Setup the local APIC timer for this CPU. Copy the initialized values
@@ -580,15 +661,44 @@ static void setup_APIC_timer(void)
 	levt->cpumask = cpumask_of(smp_processor_id());
 
 	if (this_cpu_has(X86_FEATURE_TSC_DEADLINE_TIMER)) {
+		levt->name = "lapic-deadline";
 		levt->features &= ~(CLOCK_EVT_FEAT_PERIODIC |
 				    CLOCK_EVT_FEAT_DUMMY);
 		levt->set_next_event = lapic_next_deadline;
 		clockevents_config_and_register(levt,
-						(tsc_khz / TSC_DIVISOR) * 1000,
+						tsc_khz * (1000 / TSC_DIVISOR),
 						0xF, ~0UL);
 	} else
 		clockevents_register_device(levt);
-#endif
+#endif /* L4 */
+}
+
+/*
+ * Install the updated TSC frequency from recalibration at the TSC
+ * deadline clockevent devices.
+ */
+#ifndef CONFIG_L4
+static void __lapic_update_tsc_freq(void *info)
+{
+	struct clock_event_device *levt = this_cpu_ptr(&lapic_events);
+
+	if (!this_cpu_has(X86_FEATURE_TSC_DEADLINE_TIMER))
+		return;
+
+	clockevents_update_freq(levt, tsc_khz * (1000 / TSC_DIVISOR));
+}
+#endif /* L4 */
+
+void lapic_update_tsc_freq(void)
+{
+	/*
+	 * The clockevent device's ->mult and ->shift can both be
+	 * changed. In order to avoid races, schedule the frequency
+	 * update code on each CPU.
+	 */
+#ifndef CONFIG_L4
+	on_each_cpu(__lapic_update_tsc_freq, NULL, 0);
+#endif /* L4 */
 }
 
 /*
@@ -728,8 +838,10 @@ static int __init calibrate_APIC_clock(void)
 					TICK_NSEC, lapic_clockevent.shift);
 		lapic_clockevent.max_delta_ns =
 			clockevent_delta2ns(0x7FFFFF, &lapic_clockevent);
+		lapic_clockevent.max_delta_ticks = 0x7FFFFF;
 		lapic_clockevent.min_delta_ns =
 			clockevent_delta2ns(0xF, &lapic_clockevent);
+		lapic_clockevent.min_delta_ticks = 0xF;
 		lapic_clockevent.features &= ~CLOCK_EVT_FEAT_DUMMY;
 		return 0;
 	}
@@ -775,8 +887,10 @@ static int __init calibrate_APIC_clock(void)
 				       lapic_clockevent.shift);
 	lapic_clockevent.max_delta_ns =
 		clockevent_delta2ns(0x7FFFFFFF, &lapic_clockevent);
+	lapic_clockevent.max_delta_ticks = 0x7FFFFFFF;
 	lapic_clockevent.min_delta_ns =
 		clockevent_delta2ns(0xF, &lapic_clockevent);
+	lapic_clockevent.min_delta_ticks = 0xF;
 
 	lapic_timer_frequency = (delta * APIC_DIVISOR) / LAPIC_CAL_LOOPS;
 
@@ -893,12 +1007,14 @@ void __init setup_boot_APIC_clock(void)
 
 	/* Setup the lapic or request the broadcast */
 	setup_APIC_timer();
+	amd_e400_c1e_apic_setup();
 #endif /* L4 */
 }
 
 void setup_secondary_APIC_clock(void)
 {
 	setup_APIC_timer();
+	amd_e400_c1e_apic_setup();
 }
 
 #ifndef CONFIG_L4
@@ -1258,7 +1374,7 @@ static void lapic_setup_esr(void)
 /**
  * setup_local_APIC - setup the local APIC
  *
- * Used to setup local APIC while initializing BSP or bringin up APs.
+ * Used to setup local APIC while initializing BSP or bringing up APs.
  * Always called with preemption disabled.
  */
 void setup_local_APIC(void)
@@ -1391,7 +1507,6 @@ void setup_local_APIC(void)
 	 * Actually disabling the focus CPU check just makes the hang less
 	 * frequent as it makes the interrupt distributon model be more
 	 * like LRU than MRU (the short-term load is more even across CPUs).
-	 * See also the comment in end_level_ioapic_irq().  --macro
 	 */
 
 	/*
@@ -1631,24 +1746,16 @@ static inline void try_to_enable_x2apic(int remap_mode) { }
 static inline void __x2apic_enable(void) { }
 #endif /* !CONFIG_X86_X2APIC */
 
-#ifndef CONFIG_L4
-static int __init try_to_enable_IR(void)
-{
-#ifdef CONFIG_X86_IO_APIC
-	if (!x2apic_enabled() && skip_ioapic_setup) {
-		pr_info("Not enabling interrupt remapping due to skipped IO-APIC setup\n");
-		return -1;
-	}
-#endif
-	return irq_remapping_enable();
-}
-#endif /* L4 */
-
 void __init enable_IR_x2apic(void)
 {
 #ifndef CONFIG_L4
 	unsigned long flags;
 	int ret, ir_stat;
+
+	if (skip_ioapic_setup) {
+		pr_info("Not enabling interrupt remapping due to skipped IO-APIC setup\n");
+		return;
+	}
 
 	ir_stat = irq_remapping_prepare();
 	if (ir_stat < 0 && !x2apic_supported())
@@ -1666,7 +1773,7 @@ void __init enable_IR_x2apic(void)
 
 	/* If irq_remapping_prepare() succeeded, try to enable it */
 	if (ir_stat >= 0)
-		ir_stat = try_to_enable_IR();
+		ir_stat = irq_remapping_enable();
 	/* ir_stat contains the remap mode or an error code */
 	try_to_enable_x2apic(ir_stat);
 
@@ -1806,6 +1913,8 @@ void __init init_apic_mappings(void)
 {
 	unsigned int new_apicid;
 
+	apic_check_deadline_errata();
+
 	if (x2apic_mode) {
 		boot_cpu_physical_apicid = read_apic_id();
 		return;
@@ -1820,8 +1929,8 @@ void __init init_apic_mappings(void)
 		apic_phys = mp_lapic_addr;
 
 		/*
-		 * acpi lapic path already maps that address in
-		 * acpi_register_lapic_address()
+		 * If the system has ACPI MADT tables or MP info, the LAPIC
+		 * address is already registered.
 		 */
 		if (!acpi_lapic && !smp_found_config)
 			register_lapic_address(apic_phys);
@@ -1841,8 +1950,7 @@ void __init init_apic_mappings(void)
 		 * since smp_sanity_check is prepared for such a case
 		 * and disable smp mode
 		 */
-		apic_version[new_apicid] =
-			 GET_APIC_VERSION(apic_read(APIC_LVR));
+		boot_cpu_apic_version = GET_APIC_VERSION(apic_read(APIC_LVR));
 	}
 }
 
@@ -1853,16 +1961,13 @@ void __init register_lapic_address(unsigned long address)
 	if (!x2apic_mode) {
 		set_fixmap_nocache(FIX_APIC_BASE, address);
 		apic_printk(APIC_VERBOSE, "mapped APIC to %16lx (%16lx)\n",
-			    APIC_BASE, mp_lapic_addr);
+			    APIC_BASE, address);
 	}
 	if (boot_cpu_physical_apicid == -1U) {
 		boot_cpu_physical_apicid  = read_apic_id();
-		apic_version[boot_cpu_physical_apicid] =
-			 GET_APIC_VERSION(apic_read(APIC_LVR));
+		boot_cpu_apic_version = GET_APIC_VERSION(apic_read(APIC_LVR));
 	}
 }
-
-int apic_version[MAX_LOCAL_APIC];
 
 /*
  * Local APIC interrupts
@@ -1893,14 +1998,14 @@ static void __smp_spurious_interrupt(u8 vector)
 #endif /* L4 */
 }
 
-__visible void smp_spurious_interrupt(struct pt_regs *regs)
+__visible void __irq_entry smp_spurious_interrupt(struct pt_regs *regs)
 {
 	entering_irq();
 	__smp_spurious_interrupt(~regs->orig_ax);
 	exiting_irq();
 }
 
-__visible void smp_trace_spurious_interrupt(struct pt_regs *regs)
+__visible void __irq_entry smp_trace_spurious_interrupt(struct pt_regs *regs)
 {
 #ifndef CONFIG_L4
 	u8 vector = ~regs->orig_ax;
@@ -1953,14 +2058,14 @@ static void __smp_error_interrupt(struct pt_regs *regs)
 
 }
 
-__visible void smp_error_interrupt(struct pt_regs *regs)
+__visible void __irq_entry smp_error_interrupt(struct pt_regs *regs)
 {
 	entering_irq();
 	__smp_error_interrupt(regs);
 	exiting_irq();
 }
 
-__visible void smp_trace_error_interrupt(struct pt_regs *regs)
+__visible void __irq_entry smp_trace_error_interrupt(struct pt_regs *regs)
 {
 #ifndef CONFIG_L4
 	entering_irq();
@@ -2058,6 +2163,52 @@ void disconnect_bsp_APIC(int virt_wire_setup)
 	apic_write(APIC_LVT1, value);
 }
 
+/*
+ * The number of allocated logical CPU IDs. Since logical CPU IDs are allocated
+ * contiguously, it equals to current allocated max logical CPU ID plus 1.
+ * All allocated CPU IDs should be in the [0, nr_logical_cpuids) range,
+ * so the maximum of nr_logical_cpuids is nr_cpu_ids.
+ *
+ * NOTE: Reserve 0 for BSP.
+ */
+static int nr_logical_cpuids = 1;
+
+/*
+ * Used to store mapping between logical CPU IDs and APIC IDs.
+ */
+static int cpuid_to_apicid[] = {
+	[0 ... NR_CPUS - 1] = -1,
+};
+
+/*
+ * Should use this API to allocate logical CPU IDs to keep nr_logical_cpuids
+ * and cpuid_to_apicid[] synchronized.
+ */
+static int allocate_logical_cpuid(int apicid)
+{
+	int i;
+
+	/*
+	 * cpuid <-> apicid mapping is persistent, so when a cpu is up,
+	 * check if the kernel has allocated a cpuid for it.
+	 */
+	for (i = 0; i < nr_logical_cpuids; i++) {
+		if (cpuid_to_apicid[i] == apicid)
+			return i;
+	}
+
+	/* Allocate a new cpuid. */
+	if (nr_logical_cpuids >= nr_cpu_ids) {
+		WARN_ONCE(1, "APIC: NR_CPUS/possible_cpus limit of %i reached. "
+			     "Processor %d/0x%x and the rest are ignored.\n",
+			     nr_cpu_ids, nr_logical_cpuids, apicid);
+		return -EINVAL;
+	}
+
+	cpuid_to_apicid[nr_logical_cpuids] = apicid;
+	return nr_logical_cpuids++;
+}
+
 int generic_processor_info(int apicid, int version)
 {
 	int cpu, max = nr_cpu_ids;
@@ -2081,7 +2232,7 @@ int generic_processor_info(int apicid, int version)
 	 * Since fixing handling of boot_cpu_physical_apicid requires
 	 * another discussion and tests on each platform, we leave it
 	 * for now and here we use read_apic_id() directly in this
-	 * function, generic_processor_info().
+	 * function, __generic_processor_info().
 	 */
 	if (disabled_cpu_apicid != BAD_APICID &&
 	    disabled_cpu_apicid != read_apic_id() &&
@@ -2105,7 +2256,7 @@ int generic_processor_info(int apicid, int version)
 		int thiscpu = max + disabled_cpus - 1;
 
 		pr_warning(
-			"ACPI: NR_CPUS/possible_cpus limit of %i almost"
+			"APIC: NR_CPUS/possible_cpus limit of %i almost"
 			" reached. Keeping one slot for boot cpu."
 			"  Processor %d/0x%x ignored.\n", max, thiscpu, apicid);
 
@@ -2116,15 +2267,14 @@ int generic_processor_info(int apicid, int version)
 	if (num_processors >= nr_cpu_ids) {
 		int thiscpu = max + disabled_cpus;
 
-		pr_warning(
-			"ACPI: NR_CPUS/possible_cpus limit of %i reached."
-			"  Processor %d/0x%x ignored.\n", max, thiscpu, apicid);
+		pr_warning("APIC: NR_CPUS/possible_cpus limit of %i "
+			   "reached. Processor %d/0x%x ignored.\n",
+			   max, thiscpu, apicid);
 
 		disabled_cpus++;
 		return -EINVAL;
 	}
 
-	num_processors++;
 	if (apicid == boot_cpu_physical_apicid) {
 		/*
 		 * x86_bios_cpu_apicid is required to have processors listed
@@ -2134,21 +2284,15 @@ int generic_processor_info(int apicid, int version)
 		 * for BSP.
 		 */
 		cpu = 0;
-	} else
-		cpu = cpumask_next_zero(-1, cpu_present_mask);
 
-	/*
-	 * This can happen on physical hotplug. The sanity check at boot time
-	 * is done from native_smp_prepare_cpus() after num_possible_cpus() is
-	 * established.
-	 */
-	if (topology_update_package_map(apicid, cpu) < 0) {
-		int thiscpu = max + disabled_cpus;
-
-		pr_warning("ACPI: Package limit reached. Processor %d/0x%x ignored.\n",
-			   thiscpu, apicid);
-		disabled_cpus++;
-		return -ENOSPC;
+		/* Logical cpuid 0 is reserved for BSP. */
+		cpuid_to_apicid[0] = apicid;
+	} else {
+		cpu = allocate_logical_cpuid(apicid);
+		if (cpu < 0) {
+			disabled_cpus++;
+			return -EINVAL;
+		}
 	}
 
 	/*
@@ -2159,14 +2303,12 @@ int generic_processor_info(int apicid, int version)
 			   cpu, apicid);
 		version = 0x10;
 	}
-	apic_version[apicid] = version;
 
-	if (version != apic_version[boot_cpu_physical_apicid]) {
+	if (version != boot_cpu_apic_version) {
 		pr_warning("BIOS bug: APIC version mismatch, boot CPU: %x, CPU %d: version %x\n",
-			apic_version[boot_cpu_physical_apicid], cpu, version);
+			boot_cpu_apic_version, cpu, version);
 	}
 
-	physid_set(apicid, phys_cpu_present_map);
 	if (apicid > max_physical_apicid)
 		max_physical_apicid = apicid;
 
@@ -2179,7 +2321,9 @@ int generic_processor_info(int apicid, int version)
 		apic->x86_32_early_logical_apicid(cpu);
 #endif
 	set_cpu_possible(cpu, true);
+	physid_set(apicid, phys_cpu_present_map);
 	set_cpu_present(cpu, true);
+	num_processors++;
 
 	return cpu;
 }
@@ -2203,23 +2347,32 @@ void default_init_apic_ldr(void)
 	apic_write(APIC_LDR, val);
 }
 
-int default_cpu_mask_to_apicid_and(const struct cpumask *cpumask,
-				   const struct cpumask *andmask,
-				   unsigned int *apicid)
+int default_cpu_mask_to_apicid(const struct cpumask *mask,
+			       struct irq_data *irqdata,
+			       unsigned int *apicid)
 {
-	unsigned int cpu;
+	unsigned int cpu = cpumask_first(mask);
 
-	for_each_cpu_and(cpu, cpumask, andmask) {
-		if (cpumask_test_cpu(cpu, cpu_online_mask))
-			break;
-	}
+	if (cpu >= nr_cpu_ids)
+		return -EINVAL;
+	*apicid = per_cpu(x86_cpu_to_apicid, cpu);
+	irq_data_update_effective_affinity(irqdata, cpumask_of(cpu));
+	return 0;
+}
 
-	if (likely(cpu < nr_cpu_ids)) {
-		*apicid = per_cpu(x86_cpu_to_apicid, cpu);
-		return 0;
-	}
+int flat_cpu_mask_to_apicid(const struct cpumask *mask,
+			    struct irq_data *irqdata,
+			    unsigned int *apicid)
 
-	return -EINVAL;
+{
+	struct cpumask *effmsk = irq_data_get_effective_affinity_mask(irqdata);
+	unsigned long cpu_mask = cpumask_bits(mask)[0] & APIC_ALL_CPUS;
+
+	if (!cpu_mask)
+		return -EINVAL;
+	*apicid = (unsigned int)cpu_mask;
+	cpumask_bits(effmsk)[0] = cpu_mask;
+	return 0;
 }
 
 /*
@@ -2235,6 +2388,7 @@ void __init apic_set_eoi_write(void (*eoi_write)(u32 reg, u32 v))
 	for (drv = __apicdrivers; drv < __apicdrivers_end; drv++) {
 		/* Should happen once for each apic */
 		WARN_ON((*drv)->eoi_write == eoi_write);
+		(*drv)->native_eoi_write = (*drv)->eoi_write;
 		(*drv)->eoi_write = eoi_write;
 	}
 }
@@ -2242,7 +2396,7 @@ void __init apic_set_eoi_write(void (*eoi_write)(u32 reg, u32 v))
 static void __init apic_bsp_up_setup(void)
 {
 #ifdef CONFIG_X86_64
-	apic_write(APIC_ID, SET_APIC_ID(boot_cpu_physical_apicid));
+	apic_write(APIC_ID, apic->set_apic_id(boot_cpu_physical_apicid));
 #else
 	/*
 	 * Hack: In case of kdump, after a crash, kernel might be booting
@@ -2310,7 +2464,7 @@ int __init APIC_init_uniprocessor(void)
 	 * Complain if the BIOS pretends there is one.
 	 */
 	if (!boot_cpu_has(X86_FEATURE_APIC) &&
-	    APIC_INTEGRATED(apic_version[boot_cpu_physical_apicid])) {
+	    APIC_INTEGRATED(boot_cpu_apic_version)) {
 		pr_err("BIOS bug, local APIC 0x%x not detected!...\n",
 			boot_cpu_physical_apicid);
 		return -1;
@@ -2636,7 +2790,7 @@ static int __init lapic_insert_resource(void)
 }
 
 /*
- * need call insert after e820_reserve_resources()
+ * need call insert after e820__reserve_resources()
  * that is using request_resource
  */
 late_initcall(lapic_insert_resource);

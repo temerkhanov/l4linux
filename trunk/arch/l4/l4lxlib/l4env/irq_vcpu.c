@@ -32,6 +32,7 @@
 #define d_printk(format, args...)  printk(format , ## args)
 #define dd_printk(format, args...) do { if (0) printk(format , ## args); } while (0)
 
+static DEFINE_SPINLOCK(migrate_lock);
 
 static inline l4_cap_idx_t get_irq(struct l4x_irq_desc_private *p)
 {
@@ -46,8 +47,8 @@ static inline void attach_to_irq(struct irq_data *data)
 	unsigned cpu = p->is_percpu ? smp_processor_id() : p->cpu;
 	l4_cap_idx_t ic = get_irq(p);
 
-	if ((r = L4XV_FN_i(l4_error(l4_irq_attach(ic, irq << 2,
-	                                          l4x_cpu_thread_get_cap(cpu))))))
+	if ((r = L4XV_FN_e(l4_irq_attach(ic, irq << 2,
+	                                 l4x_cpu_thread_get_cap(cpu)))))
 		dd_printk("%s: can't register to irq %u: return=%ld\n",
 		          __func__, irq, r);
 
@@ -214,9 +215,6 @@ void l4lx_irq_dev_eoi(struct irq_data *data)
 {
 	l4lx_irq_dev_unmask(data);
 }
-
-
-static spinlock_t migrate_lock;
 
 int
 do_l4lx_irq_set_affinity(struct irq_data *data,

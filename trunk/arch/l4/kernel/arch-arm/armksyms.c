@@ -66,7 +66,6 @@ EXPORT_SYMBOL(__csum_ipv6_magic);
 #endif
 
 	/* io */
-#ifndef CONFIG_L4
 #ifndef __raw_readsb
 EXPORT_SYMBOL(__raw_readsb);
 #endif
@@ -84,7 +83,6 @@ EXPORT_SYMBOL(__raw_writesw);
 #endif
 #ifndef __raw_writesl
 EXPORT_SYMBOL(__raw_writesl);
-#endif
 #endif
 
 	/* string / mem functions */
@@ -185,7 +183,7 @@ EXPORT_SYMBOL(__pv_offset);
 
 #ifdef CONFIG_HAVE_ARM_SMCCC
 #ifndef CONFIG_L4
-EXPORT_SYMBOL(arm_smccc_smc);
-EXPORT_SYMBOL(arm_smccc_hvc);
+EXPORT_SYMBOL(__arm_smccc_smc);
+EXPORT_SYMBOL(__arm_smccc_hvc);
 #endif
 #endif

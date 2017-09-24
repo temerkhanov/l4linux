@@ -5,6 +5,7 @@
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <linux/hardirq.h>
+#include <linux/uaccess.h>
 
 #include <asm/l4x/exception.h>
 
@@ -58,6 +59,7 @@ static inline pte_t *lookup_pte_lock(struct mm_struct *mm,
                                      unsigned *page_shift,
                                      spinlock_t **ptl)
 {
+	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd;
 	pgd_t *pgd = mm->pgd + pgd_index(address);
@@ -65,7 +67,11 @@ static inline pte_t *lookup_pte_lock(struct mm_struct *mm,
 	if (unlikely(!pgd_present(*pgd)))
 		return NULL;
 
-	pud = pud_offset(pgd, address);
+	p4d = p4d_offset(pgd, address);
+	if (unlikely(!p4d_present(*p4d)))
+		return NULL;
+
+	pud = pud_offset(p4d, address);
 	if (unlikely(!pud_present(*pud)))
 		return NULL;
 
@@ -73,14 +79,19 @@ static inline pte_t *lookup_pte_lock(struct mm_struct *mm,
 	if (unlikely(!pmd_present(*pmd)))
 		return NULL;
 
-	if (ptl)
-		*ptl = pte_lockptr(mm, pmd);
 #ifdef CONFIG_X86
 	if (pmd_large(*pmd)) {
+		if (ptl)
+			*ptl = pmd_lockptr(mm, pmd);
+
 		*page_shift = PMD_SHIFT;
 		return (pte_t *)pmd;
 	}
 #endif
+
+	if (ptl)
+		*ptl = pte_lockptr(mm, pmd);
+
 	*page_shift = PAGE_SHIFT;
 	return pte_offset_kernel(pmd, address);
 }
@@ -127,7 +138,7 @@ retry:
 	while (ptep == NULL || !l4x_pte_present_user(*ptep)) {
 		struct pt_regs kregs;
 
-		if (in_atomic())
+		if (faulthandler_disabled())
 			goto return_efault;
 
 		l4x_init_kernel_regs(&kregs);
@@ -143,7 +154,7 @@ retry:
 	}
 
 	if (!spin_trylock(ptl)) {
-		if (in_atomic())
+		if (faulthandler_disabled())
 			goto return_efault;
 
 		local_irq_enable();
@@ -185,7 +196,7 @@ retry:
 	while (ptep == NULL || !l4x_pte_present_user(*ptep) || !pte_write(*ptep)) {
 		struct pt_regs kregs;
 
-		if (in_atomic())
+		if (faulthandler_disabled())
 			goto return_efault;
 
 #ifdef DEBUG_PARSE_PTABS_WRITE
@@ -218,7 +229,7 @@ retry:
 	}
 
 	if (!spin_trylock(ptl)) {
-		if (in_atomic())
+		if (faulthandler_disabled())
 			goto return_efault;
 
 		local_irq_enable();

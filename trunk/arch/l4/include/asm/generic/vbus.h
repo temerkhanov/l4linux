@@ -15,12 +15,19 @@ struct l4x_vbus_device_id {
 	const char *cid;
 };
 
+struct l4x_vbus_resource {
+	struct list_head list;
+	struct resource res;
+};
+
 struct l4x_vbus_device {
 	unsigned long vbus_handle;
 	char hid[L4X_DEVICE_MAX_HID_LEN];
 	void *driver_data;
 	struct device dev;
 	struct l4x_event_stream ev_stream;
+
+	struct list_head resources;
 };
 
 struct l4x_vbus_driver_ops {
@@ -36,6 +43,10 @@ struct l4x_vbus_driver {
 	struct l4x_vbus_driver_ops ops;
 	struct device_driver driver;
 };
+
+struct resource *
+l4x_vbus_device_get_resource(struct l4x_vbus_device *dev,
+                             unsigned long type, unsigned num);
 
 static inline struct l4x_vbus_device *
 l4x_vbus_device_from_device(struct device *dev)

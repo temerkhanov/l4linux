@@ -251,7 +251,8 @@ static void fn_open(l4fdx_srv_obj srv_obj, struct internal_request *r)
 
 	if (c->flag_nogrow && err == 0) {
 		struct kstat stat;
-		int r = vfs_getattr(&f->f_path, &stat);
+		int r = vfs_getattr(&f->f_path, &stat,
+		                    STATX_SIZE, AT_STATX_SYNC_AS_STAT);
 		c->max_file_size = r ? 0 : stat.size;
 	}
 
@@ -284,7 +285,8 @@ static void fn_fstat64(l4fdx_srv_obj srv_obj, struct internal_request *r)
 		goto out;
 	}
 
-	err = vfs_getattr(&c->files[fid]->f_path, &stat);
+	err = vfs_getattr(&c->files[fid]->f_path, &stat,
+	                  STATX_ALL, AT_STATX_SYNC_AS_STAT);
 
 	if (!err) {
 		struct l4fdx_stat_t *b;
@@ -447,7 +449,8 @@ static int fn(void *d)
 		         "l4xfdx-%s", client->capname);
 	else
 		snprintf(current->comm, sizeof(current->comm),
-		         "l4xfdx-%lx", client->cap >> L4_CAP_SHIFT);
+		         "l4xfdx-%lx",
+	                 (client->cap >> L4_CAP_SHIFT) & 0xfffffff);
 	current->comm[sizeof(current->comm) - 1] = 0;
 
 	set_user_nice(current, -20);

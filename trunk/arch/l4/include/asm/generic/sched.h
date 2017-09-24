@@ -12,8 +12,15 @@
 #ifndef CONFIG_L4_VCPU
 static inline int l4x_in_kernel(void)
 {
-	return !per_cpu(l4x_current_proc_run, smp_processor_id())
-	       || !per_cpu(l4x_current_proc_run, smp_processor_id())->task->mm;
+	unsigned cpu = smp_processor_id();
+	if (!per_cpu(l4x_current_proc_run, cpu))
+		return true;
+
+#ifdef CONFIG_THREAD_INFO_IN_TASK
+	return !((struct task_struct *)(per_cpu(l4x_current_proc_run, cpu)))->mm;
+#else
+	return !per_cpu(l4x_current_proc_run, cpu)->task->mm;
+#endif
 }
 
 /*
@@ -56,7 +63,11 @@ static inline void l4x_wakeup_idle_if_needed(void)
 				 * triggers any possible interrupt work to
 				 * do.
 				 */
+#ifdef CONFIG_THREAD_INFO_IN_TASK
+				l4x_suspend_user((struct task_struct *)t, cpu);
+#else
 				l4x_suspend_user(t->task, cpu);
+#endif
 			}
 		}
 	}

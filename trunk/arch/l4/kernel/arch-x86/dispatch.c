@@ -1,6 +1,6 @@
 
 #include <linux/kernel.h>
-#include <linux/sched.h>
+#include <linux/sched/task_stack.h>
 #include <linux/interrupt.h>
 #include <linux/ptrace.h>
 #include <linux/tick.h>
@@ -80,6 +80,15 @@
 
 #endif
 
+// In arch/x86/entry/common.c
+// Better: Use do_syscall_64 and do_syscall_32_irqs_on
+//long syscall_trace_enter(struct pt_regs *regs);
+
+#if defined(CONFIG_X86_32) || defined(CONFIG_IA32_EMULATION)
+// entry/common.c
+void do_syscall_32_irqs_on(struct pt_regs *regs);
+#endif
+
 #ifdef CONFIG_X86_32
 #include "dispatch_32.c"
 #endif
@@ -87,24 +96,9 @@
 #include "dispatch_64.c"
 #endif
 
-asmlinkage void __sched preempt_schedule_irq(void);
-
-static DEFINE_PER_CPU(struct l4x_arch_cpu_fpu_state, l4x_cpu_fpu_state);
-
-void l4x_fpu_set(int on_off)
-{
-	per_cpu(l4x_cpu_fpu_state, smp_processor_id()).enabled = on_off;
-}
-EXPORT_SYMBOL(l4x_fpu_set);
-
-struct l4x_arch_cpu_fpu_state *l4x_fpu_get(unsigned cpu)
-{
-	return &per_cpu(l4x_cpu_fpu_state, cpu);
-}
-
 static inline int l4x_msgtag_fpu(unsigned cpu)
 {
-	return l4x_fpu_get(cpu)->enabled ? L4_MSGTAG_TRANSFER_FPU : 0;
+	return L4_MSGTAG_TRANSFER_FPU;
 }
 
 static inline int l4x_msgtag_copy_ureg(l4_utcb_t *u)
@@ -134,7 +128,6 @@ static inline void l4x_arch_task_setup(struct thread_struct *t)
 
 static inline void l4x_arch_do_syscall_trace(struct task_struct *p)
 {
-	syscall_return_slowpath(task_pt_regs(p));
 }
 
 static inline int l4x_hybrid_check_after_syscall(l4_utcb_t *utcb)
@@ -168,18 +161,19 @@ static inline void l4x_arch_task_start_setup(struct task_struct *p, l4_cap_idx_t
 	unsigned int gs = l4_utcb_exc()->gs;
 #endif
 	unsigned int val = (gs & 0xffff) >> 3;
-	if (   val < l4x_fiasco_gdt_entry_offset
-	    || val > l4x_fiasco_gdt_entry_offset + 3)
+	if (   val < l4x_x86_fiasco_gdt_entry_offset
+	    || val > l4x_x86_fiasco_gdt_entry_offset + 3)
 		task_pt_regs(p)->fs = gs;
 
+#ifdef CONFIG_MODIFY_LDT_SYSCALL
 	/* Setup LDTs */
 	if (p->mm && p->mm->context.ldt) {
 		unsigned i;
 		L4XV_V(f);
 		L4XV_L(f);
-		for (i = 0; i < p->mm->context.ldt->size;
+		for (i = 0; i < p->mm->context.ldt->nr_entries;
 		     i += L4_TASK_LDT_X86_MAX_ENTRIES) {
-			unsigned sz = p->mm->context.ldt->size - i;
+			unsigned sz = p->mm->context.ldt->nr_entries- i;
 			int r;
 			if (sz > L4_TASK_LDT_X86_MAX_ENTRIES)
 				sz = L4_TASK_LDT_X86_MAX_ENTRIES;
@@ -192,6 +186,7 @@ static inline void l4x_arch_task_start_setup(struct task_struct *p, l4_cap_idx_t
 		}
 		L4XV_U(f);
 	}
+#endif
 #endif
 }
 
@@ -223,7 +218,10 @@ void l4x_idle(void);
 
 int  l4x_deliver_signal(int exception_nr);
 
-DEFINE_PER_CPU(struct thread_info *, l4x_current_ti) = &init_thread_info;
+#ifndef CONFIG_THREAD_INFO_IN_TASK
+#error CONFIG_THREAD_INFO_IN_TASK must be defined here
+#endif
+DEFINE_PER_CPU(struct thread_info *, l4x_current_ti) = (struct thread_info *)&init_task;
 DEFINE_PER_CPU(struct thread_info *, l4x_current_proc_run);
 #ifndef CONFIG_L4_VCPU
 static DEFINE_PER_CPU(unsigned, utcb_snd_size);
@@ -273,7 +271,16 @@ static inline void utcb_to_thread_struct(l4_utcb_t *utcb,
 	l4_exc_regs_t *exc = l4_utcb_exc_u(utcb);
 	utcb_exc_to_ptregs(exc, task_pt_regs(p));
 	task_pt_regs(p)->cs = USER_RPL;
+#ifdef CONFIG_X86_32
 	t->gs         = exc->gs;
+#else
+	t->fsindex    = exc->fs;
+	t->gsindex    = exc->gs;
+	t->fsbase     = exc->fs_base;
+	t->gsbase     = exc->gs_base;
+	t->es         = exc->es;
+	t->ds         = exc->ds;
+#endif
 	t->trap_nr    = exc->trapno;
 	t->error_code = exc->err;
 	t->cr2        = exc->pfa;
@@ -282,13 +289,21 @@ static inline void utcb_to_thread_struct(l4_utcb_t *utcb,
 
 static inline void thread_struct_to_utcb(struct task_struct *p,
                                          struct thread_struct *t,
+                                         struct pt_regs *regs,
                                          l4_utcb_t *utcb,
                                          unsigned int send_size)
 {
 	l4_exc_regs_t *exc = l4_utcb_exc_u(utcb);
-	ptregs_to_utcb_exc(task_pt_regs(p), exc);
+	ptregs_to_utcb_exc(regs, exc);
 #ifdef CONFIG_X86_32
-	exc->gs   = t->gs;
+	exc->gs      = t->gs;
+#else
+	exc->fs      = t->fsindex;
+	exc->gs      = t->gsindex;
+	exc->es      = L4X_SEG_CUR(es);
+	exc->ds      = L4X_SEG_CUR(ds);
+	exc->fs_base = L4X_SEG_CUR(fs_base);
+	exc->gs_base = L4X_SEG_CUR(gs_base);
 #endif
 #ifndef CONFIG_L4_VCPU
 	per_cpu(utcb_snd_size, smp_processor_id()) = send_size;
@@ -303,11 +318,15 @@ static void l4x_dispatch_suspend(struct task_struct *p,
                                  struct thread_struct *t);
 #endif
 
+/* entry/common.c */
+#ifdef CONFIG_X86_64
+void do_syscall_64(struct pt_regs *regs);
+#endif
+
 static inline void dispatch_system_call(struct task_struct *p,
                                         struct pt_regs *regsp)
 {
 	unsigned int syscall;
-	syscall_t syscall_fn = NULL;
 	int show_syscalls = 0;
 
 #ifdef CONFIG_L4_VCPU
@@ -356,25 +375,13 @@ static inline void dispatch_system_call(struct task_struct *p,
 		l4x_print_regs(p->thread.error_code, p->thread.trap_nr, regsp);
 	}
 
-	if (!likely((is_lx_syscall(syscall))
-		   && ((syscall_fn = (syscall_t)sys_call_table[syscall]))))
-		goto ret_from_syscall;
 
-	if (unlikely(current_thread_info()->flags & _TIF_WORK_SYSCALL_ENTRY)) {
-		syscall = syscall_trace_enter(regsp);
-		if (!likely((is_lx_syscall(syscall))
-		            && ((syscall_fn = (syscall_t)sys_call_table[syscall]))))
-			goto ret_from_syscall;
-	}
+#ifdef CONFIG_X86_64
+	do_syscall_64(regsp);
+#else
+	do_syscall_32_irqs_on(regsp);
+#endif
 
-	regsp->ax = syscall_fn(regsp->S_ARG0, regsp->S_ARG1,
-	                       regsp->S_ARG2, regsp->S_ARG3,
-	                       regsp->S_ARG4, regsp->S_ARG5);
-
-	if (unlikely(current_thread_info()->flags & _TIF_ALLWORK_MASK))
-		syscall_return_slowpath(regsp);
-
-ret_from_syscall:
 	if (show_syscalls)
 		printk("Syscall %3d for %s(%d at %p): return %lx/%ld\n",
 		       syscall, p->comm, p->pid, (void *)regsp->ip,
@@ -384,49 +391,15 @@ ret_from_syscall:
 #endif
 }
 
+/* Rename to l4x_pre_iret_to_user_work */
 static unsigned
-l4x_pre_iret_work(struct pt_regs *regs, struct task_struct *p,
-                  unsigned long scno, void *dummy,
-                  unsigned kernel_context)
+l4x_pre_iret_to_user_work(struct pt_regs *regs, struct task_struct *p,
+                          unsigned long scno, void *dummy,
+                          unsigned kernel_context)
 {
-	unsigned was_interruptible = 0;
-
-	if (kernel_context)
-#ifdef CONFIG_PREEMPT
-		goto resume_kernel;
-#else
-		goto restore_all;
-#endif
-
-#ifdef CONFIG_DEBUG_LOCK_ALLOC
-	lockdep_sys_exit();
-#endif
 	local_irq_disable();
-	// TRACE_IRQS_OFF
 	prepare_exit_to_usermode(regs);
-	goto restore_all;
-
-
-#ifdef CONFIG_PREEMPT
-resume_kernel:
-	local_irq_disable();
-
-	if (preempt_count() == 0)
-		goto restore_all;
-
-need_resched:
-	if (regs->flags & X86_EFLAGS_IF)
-		goto restore_all;
-
-	preempt_schedule_irq();
-	was_interruptible = 1;
-
-	goto need_resched;
-#endif
-
-restore_all:
-	// TRACE_IRQS_IRET
-	return was_interruptible;
+	return 0;
 }
 
 static int l4x_port_emu_rtc_dummy(bool in, u32 port,
@@ -484,6 +457,21 @@ static int l4x_port_emu_i8042_dummy(bool in, u32 port,
 	return 1;
 }
 
+/* This allows to add the 8250 serial driver to L4Linux and munges
+ * away the exceptions that happen because a particular UART is
+ * not available.
+ */
+static int l4x_port_emu_8250_dummy(bool in, u32 port, u8 accesslen, u32 *value)
+{
+	if (port == 0x3f9 || port == 0x2f9 || port == 0x3e9 || port == 0x2e9) {
+		if (in)
+			*value = ~0;
+		return 1;
+	}
+
+	return 0;
+}
+
 
 typedef int (*l4x_port_emu_function)(bool in, u32 port,
                                      u8 accesslen, u32 *value);
@@ -493,6 +481,7 @@ static l4x_port_emu_function l4x_port_emu_funcs[] = {
 	l4x_port_emu_vga_dummy,
 	l4x_port_emu_pci_dummy,
 	l4x_port_emu_i8042_dummy,
+	l4x_port_emu_8250_dummy,
 };
 
 
@@ -733,7 +722,7 @@ static inline int l4x_dispatch_exception(struct task_struct *p,
 
 		BUG_ON(p != current);
 
-		return 0;
+		return 1;
 #ifdef CONFIG_IA32_EMULATION
 	} else if (likely(l4x_is_compat_syscall(err, trapno, regs))) {
 		/* set after int 0x80, before syscall so the forked childs
@@ -744,7 +733,7 @@ static inline int l4x_dispatch_exception(struct task_struct *p,
 
 		BUG_ON(p != current);
 
-		return 0;
+		return 1;
 #endif
 	}
 
@@ -820,7 +809,7 @@ static inline void l4x_vcpu_entry_user_arch(void)
 	     "mov %1, %%fs \n"
 	     : : "r" (l4x_x86_utcb_get_orig_segment()),
 #ifdef CONFIG_SMP
-	     "r" ((l4x_fiasco_gdt_entry_offset + 2) * 8 + 3)
+	     "r" ((l4x_x86_fiasco_gdt_entry_offset + 2) * 8 + 3)
 #else
 	     "r" (l4x_x86_utcb_get_orig_segment())
 #endif

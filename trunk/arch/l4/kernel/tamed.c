@@ -277,9 +277,8 @@ void l4x_global_cli(void)
 	l4vcpu_irq_disable(l4x_vcpu_state_current());
 	smp_mb();
 #else
-	struct thread_info *ti = current_thread_info_stack();
-	l4_cap_idx_t me = l4x_cap_current_utcb(l4x_utcb_current(ti));
-	int nr = get_tamer_nr(ti->cpu);
+	l4_cap_idx_t me = l4x_cap_current_utcb(l4x_utcb_current());
+	int nr = get_tamer_nr(smp_processor_id());
 
 	if (unlikely((me >> L4_CAP_SHIFT) > 9000))
 		enter_kdebug("Unset id on stack (c)?");
@@ -333,11 +332,11 @@ static void l4x_srv_setup_recv_wrap(l4_utcb_t *utcb)
 void l4x_global_sti(void)
 {
 #ifdef CONFIG_L4_VCPU
-	l4vcpu_irq_enable(l4x_vcpu_state_current(), l4x_utcb_current(current_thread_info()),
+	l4vcpu_irq_enable(l4x_vcpu_state_current(), l4x_utcb_current(),
 	                  do_vcpu_irq, l4x_srv_setup_recv_wrap);
 #else
 	l4_cap_idx_t me = l4x_cap_current();
-	int nr = get_tamer_nr(current_thread_info_stack()->cpu);
+	int nr = get_tamer_nr(raw_smp_processor_id());
 
 	if (unlikely((me >> L4_CAP_SHIFT) > 9000))
 		enter_kdebug("Unset id on stack (s)?");
@@ -359,7 +358,7 @@ EXPORT_SYMBOL(l4x_global_sti);
 #ifdef CONFIG_L4_VCPU
 void l4x_global_halt(void)
 {
-	l4vcpu_wait_for_event(l4x_vcpu_state_current(), l4x_utcb_current(current_thread_info()),
+	l4vcpu_wait_for_event(l4x_vcpu_state_current(), l4x_utcb_current(),
 	                      do_vcpu_irq, l4x_srv_setup_recv_wrap);
 #ifdef CONFIG_X86
 	// on x86, interrupts are enabled after hlt
@@ -381,7 +380,7 @@ static struct l4x_pm_event_data pm_event;
 void l4x_global_wait_save(void)
 {
 	l4_vcpu_ipc_regs_t *vcpu = &l4x_vcpu_state_current()->i;
-	l4_utcb_t *utcb = l4x_utcb_current(current_thread_info());
+	l4_utcb_t *utcb = l4x_utcb_current();
 
 	BUG_ON(!irqs_disabled());
 
@@ -398,7 +397,7 @@ void l4x_global_saved_event_inject(void)
 {
 	l4_vcpu_state_t *vcpu = l4x_vcpu_state_current();
 	l4_vcpu_ipc_regs_t *vcpu_ipc = &vcpu->i;
-	l4_utcb_t *utcb = l4x_utcb_current(current_thread_info());
+	l4_utcb_t *utcb = l4x_utcb_current();
 	unsigned long flags;
 
 	if (!pm_event.valid)
@@ -429,7 +428,7 @@ unsigned long l4x_global_save_flags(void)
 	return l4x_vcpu_state_current()->state;
 #else
 	return l4_capability_equal(tamed_per_nr(cli_lock,
-	                                        get_tamer_nr(current_thread_info_stack()->cpu)).owner,
+	                                        get_tamer_nr(raw_smp_processor_id())).owner,
 	                           l4x_cap_current()) ? L4_IRQ_DISABLED : L4_IRQ_ENABLED;
 #endif
 }
@@ -439,7 +438,7 @@ void l4x_global_restore_flags(unsigned long flags)
 {
 #ifdef CONFIG_L4_VCPU
 	l4vcpu_irq_restore(l4x_vcpu_state_current(), flags,
-	                   l4x_utcb_current(current_thread_info()), do_vcpu_irq,
+	                   l4x_utcb_current(), do_vcpu_irq,
 	                   l4x_srv_setup_recv_wrap);
 #else
 	switch (flags) {

@@ -2,14 +2,24 @@
 # arch/l4/mm/arch-arm/Makefile
 #
 
-obj-y		:= init.o flush.o ioremap.o proc-l4.o dma-mapping.o \
-                   fault.o fault-armv.o extable.o mmap.o \
-		   pgd.o mmu.o iomap.o idmap.o pageattr.o
+obj-y				:= extable.o fault.o init.o iomap.o
+obj-y				+= dma-mapping$(MMUEXT).o
+obj-$(CONFIG_MMU)		+= fault-armv.o flush.o idmap.o ioremap.o \
+				   mmap.o pgd.o mmu.o pageattr.o
 
-obj-$(CONFIG_CPU_COPY_V6) += context.o
+obj-y				+= proc-l4.o
+
+ifneq ($(CONFIG_MMU),y)
+obj-y				+= nommu.o
+endif
+
 obj-$(CONFIG_ARM_PTDUMP)	+= dump.o
+obj-$(CONFIG_MODULES)		+= proc-syms.o
+obj-$(CONFIG_DEBUG_VIRTUAL)	+= physaddr.o
+
 obj-$(CONFIG_ALIGNMENT_TRAP)	+= alignment.o
-obj-$(CONFIG_MODULES)           += proc-syms.o
+
+obj-$(CONFIG_CPU_COPY_V6)	+= context.o
 
 obj-$(CONFIG_OUTER_CACHE)	+= l2c-common.o
 

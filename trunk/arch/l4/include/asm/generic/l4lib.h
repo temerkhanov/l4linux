@@ -15,13 +15,13 @@
 #endif
 
 #define L4_EXTERNAL_FUNC(func) \
-	asm(".section \".data.l4externals.str\"                         \n" \
+	asm(".section \".data..l4externals.str\"                        \n" \
 	    "9: .string \"" __stringify(func) "\"                       \n" \
 	    ".previous                                                  \n" \
 	    \
 	    "7: .long 9b                                                \n" \
 	    \
-	    L4XROWC(".section \".data.l4externals.jmptbl\"", "")       "\n" \
+	    L4XROWC(".section \".data..l4externals.jmptbl\"", "")      "\n" \
 	    ".p2align 2\n" \
 	    "8: .long " __stringify(func##_resolver) "                  \n" \
 	    L4XROWC(".previous\n", "")                                 "\n" \
@@ -53,15 +53,15 @@
 #define RAX_SETUP "xor %eax,%eax; "
 #endif
 #define L4_EXTERNAL_FUNC_GEN(func, call_prolog) \
-	asm(".section \".data.l4externals.str\"                         \n" \
+	asm(".section \".data..l4externals.str\"                        \n" \
 	    "9: .string \"" __stringify(func) "\"                       \n" \
 	    ".previous                                                  \n" \
 	    \
-	    ".section \".data.l4externals.symtab\"                      \n" \
+	    ".section \".data..l4externals.symtab\"                     \n" \
 	    "7: "PSTOR" 9b                                              \n" \
 	    ".previous                                                  \n" \
 	    \
-	    ".section \".data.l4externals.jmptbl\"                      \n" \
+	    ".section \".data..l4externals.jmptbl\"                     \n" \
 	    "8: "PSTOR" " __stringify(func##_resolver) "                \n" \
 	    ".previous                                                  \n" \
 	    \

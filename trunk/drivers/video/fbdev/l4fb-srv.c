@@ -128,7 +128,7 @@ static int get_framebuffer(void)
 	info.i.pixel_info.b.size          = F.blue.length;
 	info.i.pixel_info.a.shift         = F.transp.offset;
 	info.i.pixel_info.a.size          = F.transp.length;
-#undef FB
+#undef F
 
 	info.screen_base        = (l4_addr_t)fb_info->screen_base;
 	info.screen_size        = (l4_addr_t)fb_info->fix.smem_len;

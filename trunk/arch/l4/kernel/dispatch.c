@@ -224,11 +224,10 @@ l4x_pf_pfa_to_fp(struct task_struct *p, unsigned long pfa,
 }
 
 #ifndef CONFIG_L4_VCPU
-static int l4x_hybrid_return(struct thread_info *ti,
+static int l4x_hybrid_return(struct task_struct *h,
                              l4_utcb_t *utcb,
                              l4_msgtag_t tag)
 {
-	struct task_struct *h = ti->task;
 	struct thread_struct *t = &h->thread;
 
 	if (!t->l4x.hybrid_sc_in_prog)
@@ -257,9 +256,8 @@ static int l4x_hybrid_return(struct thread_info *ti,
 
 out_fail:
 	LOG_printf("%s: Invalid hybrid return for %p ("
-	           "%p, %lx, err=%lx, sc=%d, pc=%lx, sp=%lx, tag=%lx)!\n",
-	           __func__, ti,
-	           h, l4_utcb_exc_typeval(l4_utcb_exc_u(utcb)),
+	           "%lx, err=%lx, sc=%d, pc=%lx, sp=%lx, tag=%lx)!\n",
+	           __func__, h, l4_utcb_exc_typeval(l4_utcb_exc_u(utcb)),
 	           l4_utcb_exc_u(utcb)->err,
 	           l4x_l4syscall_get_nr(l4_utcb_exc_u(utcb)->err,
 			                l4_utcb_exc_pc(l4_utcb_exc_u(utcb))),
@@ -276,7 +274,7 @@ out_fail:
 struct l4x_hybrid_object
 {
 	struct l4x_srv_object o;
-	struct thread_info *ti;
+	struct task_struct *task;
 };
 
 static L4_CV long
@@ -285,7 +283,7 @@ l4x_hybrid_dispatch(struct l4x_srv_object *_this,
                     l4_msgtag_t *tag)
 {
 	struct l4x_hybrid_object *ho = (struct l4x_hybrid_object *)_this;
-	return l4x_hybrid_return(ho->ti, msg, *tag);
+	return l4x_hybrid_return(ho->task, msg, *tag);
 }
 
 /*
@@ -322,7 +320,7 @@ static int l4x_hybrid_begin(struct task_struct *p,
 			return 0;
 
 		ho->o.dispatch = l4x_hybrid_dispatch;
-		ho->ti = current_thread_info();
+		ho->task = p;
 
 		tag = l4_factory_create_gate(l4re_env()->factory, hybgate,
 		                             l4x_cap_current(),
@@ -826,7 +824,7 @@ static void l4x_user_dispatcher(void)
 		} else {
 			if (!l4x_dispatch_exception(p, t, thread_val_err(t),
 			                            thread_val_trapno(t), task_pt_regs(p), l4x_l4pfa(t)))
-				l4x_pre_iret_work(task_pt_regs(p), p, 0, 0, 0);
+				l4x_pre_iret_to_user_work(task_pt_regs(p), p, 0, 0, 0);
 
 			reply_with_fpage = 0;
 		}
@@ -843,7 +841,7 @@ static void l4x_user_dispatcher(void)
 			= p->thread.l4x.user_thread_ids[cpu];
 
 reply_IPC:
-		thread_struct_to_utcb(p, t, utcb,
+		thread_struct_to_utcb(p, t, task_pt_regs(p), utcb,
 		                      L4_UTCB_EXCEPTION_REGS_SIZE);
 
 		per_cpu(l4x_current_proc_run, cpu) = current_thread_info();
@@ -889,7 +887,8 @@ after_IPC:
 		error = l4_ipc_error(tag, utcb);
 #if defined(CONFIG_SMP) && defined(CONFIG_X86)
 		asm("mov %0, %%fs"
-		    : : "r" (l4x_fiasco_gdt_entry_offset * 8 + 3) : "memory");
+		    : : "r" (l4x_x86_fiasco_gdt_entry_offset * 8 + 3)
+		    : "memory");
 #endif
 
 		// dbg
@@ -964,7 +963,7 @@ void syscall_exit(void)
 {
 	struct task_struct *p = current;
 	l4x_arch_do_syscall_trace(p);
-	l4x_pre_iret_work(task_pt_regs(p), p, 0, 0, 0);
+	l4x_pre_iret_to_user_work(task_pt_regs(p), p, 0, 0, 0);
 	l4x_user_dispatcher();
 }
 
@@ -1140,7 +1139,6 @@ l4x_vcpu_entry_kern(l4_vcpu_state_t *vcpu)
 	if (l4vcpu_is_irq_entry(vcpu)) {
 		vcpu_to_ptregs_kern(vcpu, regsp);
 		l4x_vcpu_handle_irq(vcpu, regsp);
-		l4x_pre_iret_work(regsp, p, 0, 0, 1);
 		copy_ptregs = 1;
 
 	} else if (l4x_ispf_v(vcpu)) {
@@ -1157,9 +1155,8 @@ l4x_vcpu_entry_kern(l4_vcpu_state_t *vcpu)
 			vcpu_to_ptregs_kern(vcpu, regsp);
 			if (vcpu->saved_state & L4_VCPU_F_IRQ)
 				local_irq_enable();
-			if (!l4x_dispatch_exception(p, t, err, trapno,
-			                            regsp, vcpu->r.pfa))
-				l4x_pre_iret_work(regsp, p, 0, 0, 1);
+			l4x_dispatch_exception(p, t, err, trapno,
+			                       regsp, vcpu->r.pfa);
 			copy_ptregs = 1;
 		}
 	}
@@ -1230,7 +1227,7 @@ void l4x_vcpu_entry(l4_vcpu_state_t *vcpu)
 
 	if (l4vcpu_is_irq_entry(vcpu)) {
 		l4x_vcpu_handle_irq(vcpu, regsp);
-		l4x_pre_iret_work(regsp, p, 0, 0, 0);
+		l4x_pre_iret_to_user_work(regsp, p, 0, 0, 0);
 	} else if (l4x_ispf_v(vcpu)) {
 		int reply_with_fpage = l4x_dispatch_page_fault(p, t, regsp);
 
@@ -1239,14 +1236,14 @@ void l4x_vcpu_entry(l4_vcpu_state_t *vcpu)
 			local_irq_disable();
 			do {
 				l4x_pf_pfa_to_fp(p, l4x_l4pfa(t), &data0, &data1);
-			} while (l4x_pre_iret_work(regsp, p, 0, 0, 0));
+			} while (l4x_pre_iret_to_user_work(regsp, p, 0, 0, 0));
 			l4x_vcpu_iret(p, t, regsp, data0, data1, 1);
 		}
-		l4x_pre_iret_work(regsp, p, 0, 0, 0);
+		l4x_pre_iret_to_user_work(regsp, p, 0, 0, 0);
 	} else {
 		if (!l4x_dispatch_exception(p, t, vcpu_val_err(vcpu),
 		                            vcpu_val_trapno(vcpu), regsp, l4x_l4pfa(t)))
-			l4x_pre_iret_work(regsp, p, 0, 0, 0);
+			l4x_pre_iret_to_user_work(regsp, p, 0, 0, 0);
 	}
 
 	smp_mb();
@@ -1258,7 +1255,7 @@ void syscall_exit(void)
 	struct task_struct *p = current;
 	struct pt_regs *r = task_pt_regs(p);
 	l4x_arch_do_syscall_trace(p);
-	l4x_pre_iret_work(r, p, 0, 0, 0);
+	l4x_pre_iret_to_user_work(r, p, 0, 0, 0);
 	l4x_vcpu_iret(p, &p->thread, r, 0, 0, 1);
 }
 

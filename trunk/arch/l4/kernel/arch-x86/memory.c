@@ -4,7 +4,7 @@
 #include <linux/mm.h>
 
 #include <asm-generic/sections.h>
-#include <asm/e820.h>
+#include <asm/e820/api.h>
 
 #include <asm/generic/setup.h>
 
@@ -17,20 +17,20 @@ char * __init l4x_x86_memory_setup(void)
 
 	max_pfn_mapped = (mem_start + mem_size + ((1 << 12) - 1)) >> 12;
 
-	e820.nr_map = 0;
+	e820_table->nr_entries = 0;
 
         /* minimum 2 pages required */
-	e820_add_region(0, textbegin, E820_RESERVED);
+	e820__range_add(0, textbegin, E820_TYPE_RESERVED);
 
 	if ((unsigned long)&_end > mem_start)
 		printk("Uh, something looks strange.\n");
-	e820_add_region(textbegin, (unsigned long)&_end - textbegin,
-	                E820_RESERVED_KERN);
-	e820_add_region((unsigned long)&_end,
-	                mem_start - (unsigned long)&_end, E820_UNUSABLE);
-	e820_add_region(mem_start, mem_size, E820_RAM);
+	e820__range_add(textbegin, (unsigned long)&_end - textbegin,
+	                E820_TYPE_RESERVED_KERN);
+	e820__range_add((unsigned long)&_end,
+	                mem_start - (unsigned long)&_end, E820_TYPE_UNUSABLE);
+	e820__range_add(mem_start, mem_size, E820_TYPE_RAM);
 
-	sanitize_e820_map(e820.map, ARRAY_SIZE(e820.map), &e820.nr_map);
+	e820__update_table(e820_table);
 
 	return "L4Lx-Memory";
 }

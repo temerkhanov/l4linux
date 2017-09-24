@@ -2,6 +2,7 @@
 #include <linux/suspend.h>
 #include <linux/syscore_ops.h>
 #include <linux/interrupt.h>
+#include <linux/sched/signal.h>
 #include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
@@ -121,7 +122,7 @@ static int l4x_pm_plat_prepare(void)
 
 static void attach_to_irq(int irq, l4_cap_idx_t cap, l4_cap_idx_t t)
 {
-	int ret = L4XV_FN_i(l4_error(l4_irq_attach(cap, irq << 2, t)));
+	int ret = L4XV_FN_e(l4_irq_attach(cap, irq << 2, t));
 	if (ret)
 		printk("Failed to attach wakeup source %d/%lx: %d\n",
 				irq, cap, ret);
@@ -132,7 +133,7 @@ static void attach_to_irq(int irq, l4_cap_idx_t cap, l4_cap_idx_t t)
 
 static void detach_from_irq(int irq, l4_cap_idx_t cap)
 {
-	int ret = L4XV_FN_i(l4_error(l4_irq_detach(cap)));
+	int ret = L4XV_FN_e(l4_irq_detach(cap));
 	if (ret)
 		printk("Failed to detach wakeup source %d: %d\n", irq, ret);
 	else

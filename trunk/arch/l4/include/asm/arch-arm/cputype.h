@@ -55,7 +55,7 @@
 #define CPUID_EXT_ISAR3	0x53
 #define CPUID_EXT_ISAR4	0x54
 #define CPUID_EXT_ISAR5	0x55
-#else
+#else /* L4 */
 #define CPUID_EXT_PFR0	"c1, 0"
 #define CPUID_EXT_PFR1	"c1, 1"
 #define CPUID_EXT_DFR0	"c1, 2"
@@ -70,7 +70,7 @@
 #define CPUID_EXT_ISAR3	"c2, 3"
 #define CPUID_EXT_ISAR4	"c2, 4"
 #define CPUID_EXT_ISAR5	"c2, 5"
-#endif
+#endif /* L4 */
 #endif
 
 #define MPIDR_SMP_BITMASK (0x3 << 30)
@@ -84,11 +84,13 @@
 
 #define MPIDR_LEVEL_BITS 8
 #define MPIDR_LEVEL_MASK ((1 << MPIDR_LEVEL_BITS) - 1)
+#define MPIDR_LEVEL_SHIFT(level) (MPIDR_LEVEL_BITS * level)
 
 #define MPIDR_AFFINITY_LEVEL(mpidr, level) \
 	((mpidr >> (MPIDR_LEVEL_BITS * level)) & MPIDR_LEVEL_MASK)
 
 #define ARM_CPU_IMP_ARM			0x41
+#define ARM_CPU_IMP_DEC			0x44
 #define ARM_CPU_IMP_INTEL		0x69
 
 /* ARM implemented processors */
@@ -105,10 +107,24 @@
 #define ARM_CPU_PART_CORTEX_A15		0x4100c0f0
 #define ARM_CPU_PART_MASK		0xff00fff0
 
+/* DEC implemented cores */
+#define ARM_CPU_PART_SA1100		0x4400a110
+
+/* Intel implemented cores */
+#define ARM_CPU_PART_SA1110		0x6900b110
+#define ARM_CPU_REV_SA1110_A0		0
+#define ARM_CPU_REV_SA1110_B0		4
+#define ARM_CPU_REV_SA1110_B1		5
+#define ARM_CPU_REV_SA1110_B2		6
+#define ARM_CPU_REV_SA1110_B4		8
+
 #define ARM_CPU_XSCALE_ARCH_MASK	0xe000
 #define ARM_CPU_XSCALE_ARCH_V1		0x2000
 #define ARM_CPU_XSCALE_ARCH_V2		0x4000
 #define ARM_CPU_XSCALE_ARCH_V3		0x6000
+
+/* Qualcomm implemented cores */
+#define ARM_CPU_PART_SCORPION		0x510002d0
 
 extern unsigned int processor_id;
 
@@ -137,7 +153,7 @@ static inline unsigned int read_cpuid_ext(unsigned ext_reg)
 	};
 }
 
-#else
+#else /* L4 */
 /*
  * The memory clobber prevents gcc 4.5 from reordering the mrc before
  * any is_smp() tests, which can cause undefined instruction aborts on
@@ -152,7 +168,7 @@ static inline unsigned int read_cpuid_ext(unsigned ext_reg)
 		    : "memory");					\
 		__val;							\
 	})
-#endif
+#endif /* L4 */
 
 #elif defined(CONFIG_CPU_V7M)
 
@@ -196,9 +212,18 @@ static inline unsigned int __attribute_const__ read_cpuid_id(void)
 {
 #ifdef CONFIG_L4
 	return l4lx_kinfo->platform_info.arch.cpuinfo.MIDR;
-#else
+#else /* L4 */
 	return read_cpuid(CPUID_ID);
-#endif
+#endif /* L4 */
+}
+
+static inline unsigned int __attribute_const__ read_cpuid_cachetype(void)
+{
+#ifdef CONFIG_L4
+	return l4lx_kinfo->platform_info.arch.cpuinfo.CTR;
+#else /* L4 */
+	return read_cpuid(CPUID_CACHETYPE);
+#endif /* L4 */
 }
 
 #elif defined(CONFIG_CPU_V7M)
@@ -206,6 +231,11 @@ static inline unsigned int __attribute_const__ read_cpuid_id(void)
 static inline unsigned int __attribute_const__ read_cpuid_id(void)
 {
 	return readl(BASEADDR_V7M_SCB + V7M_SCB_CPUID);
+}
+
+static inline unsigned int __attribute_const__ read_cpuid_cachetype(void)
+{
+	return readl(BASEADDR_V7M_SCB + V7M_SCB_CTR);
 }
 
 #else /* ifdef CONFIG_CPU_CP15 / elif defined(CONFIG_CPU_V7M) */
@@ -220,6 +250,11 @@ static inline unsigned int __attribute_const__ read_cpuid_id(void)
 static inline unsigned int __attribute_const__ read_cpuid_implementor(void)
 {
 	return (read_cpuid_id() & 0xFF000000) >> 24;
+}
+
+static inline unsigned int __attribute_const__ read_cpuid_revision(void)
+{
+	return read_cpuid_id() & 0x0000000f;
 }
 
 /*
@@ -242,15 +277,6 @@ static inline unsigned int __attribute_const__ xscale_cpu_arch_version(void)
 	return read_cpuid_id() & ARM_CPU_XSCALE_ARCH_MASK;
 }
 
-static inline unsigned int __attribute_const__ read_cpuid_cachetype(void)
-{
-#ifdef CONFIG_L4
-	return l4lx_kinfo->platform_info.arch.cpuinfo.CTR;
-#else
-	return read_cpuid(CPUID_CACHETYPE);
-#endif
-}
-
 static inline unsigned int __attribute_const__ read_cpuid_tcmstatus(void)
 {
 	return read_cpuid(CPUID_TCM);
@@ -264,6 +290,10 @@ static inline unsigned int __attribute_const__ read_cpuid_mpidr(void)
 	return (1U << 31) | l4x_cpu_physmap_get_id(smp_processor_id());
 #endif
 }
+
+/* StrongARM-11x0 CPUs */
+#define cpu_is_sa1100() (read_cpuid_part() == ARM_CPU_PART_SA1100)
+#define cpu_is_sa1110() (read_cpuid_part() == ARM_CPU_PART_SA1110)
 
 /*
  * Intel's XScale3 core supports some v6 features (supersections, L2)

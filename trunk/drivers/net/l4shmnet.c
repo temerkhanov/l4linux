@@ -5,6 +5,7 @@
 #include <linux/module.h>
 #include <linux/etherdevice.h>
 #include <linux/interrupt.h>
+#include <linux/sched/task_stack.h>
 
 #include <asm/l4lxapi/misc.h>
 #include <asm/l4lxapi/thread.h>
@@ -311,7 +312,6 @@ static irqreturn_t l4x_l4shmc_interrupt(int irq, void *dev_id)
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 		netif_rx(skb);
 
-		netdev->last_rx = jiffies;
 		priv->net_stats.rx_bytes += skb->len;
 		priv->net_stats.rx_packets++;
 	}

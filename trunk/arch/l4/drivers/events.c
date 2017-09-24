@@ -146,13 +146,11 @@ int l4x_event_setup_source(struct l4x_event_source *source,
 	if (l4_is_invalid_cap(source->irq = l4x_cap_alloc()))
 		goto out_detach_event;
 
-	if (L4XV_FN_i(l4_error(l4_factory_create_irq(l4re_env()->factory,
-	                                             source->irq))))
+	if (L4XV_FN_e(l4_factory_create_irq(l4re_env()->factory, source->irq)))
 		goto out_free_irq_cap;
 
 	res = -ENOENT;
-	if (L4XV_FN_i(l4_error(l4_icu_bind(source->event_cap, 0,
-	                                   source->irq))))
+	if (L4XV_FN_e(l4_icu_bind(source->event_cap, 0, source->irq)))
 		goto out_release_irq;
 
 	res = -ENOMEM;

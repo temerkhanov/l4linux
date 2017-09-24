@@ -97,8 +97,7 @@ Fb::set(struct l4fb_info *info, L4::Cap<L4::Thread> thread)
 	_view_info.buffer_offset  = 0;
 	_view_info.bytes_per_line = info->bytes_per_scanline;
 	_rw_flags                 = Writable;
-	_cache_flags =
-		L4::Ipc::Gen_fpage<L4::Ipc::Snd_item>::Uncached;
+	_cache_flags = L4::Ipc::Gen_fpage<L4::Ipc::Snd_item>::Buffered;
 
 	init_infos();
 

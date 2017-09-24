@@ -31,7 +31,9 @@ unsigned long __init l4x_load_dtb(const char *command_line,
                                   unsigned long offset);
 #endif
 
-void l4x_prepare_irq_thread(struct thread_info *ti, unsigned _cpu);
+#ifndef CONFIG_L4_VCPU
+void l4x_prepare_irq_thread(unsigned long sp, unsigned _cpu);
+#endif
 
 void __noreturn l4x_exit_l4linux(void);
 void __noreturn l4x_exit_l4linux_msg(const char *fmt, ...)

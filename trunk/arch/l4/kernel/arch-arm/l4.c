@@ -9,6 +9,7 @@
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/err.h>
+#include <linux/irqchip.h>
 
 #include <asm/mach-types.h>
 #include <asm/delay.h>
@@ -96,6 +97,7 @@ static int init_icu_irqs(struct device_node *devnode, l4_cap_idx_t icu)
 		return -ENOMEM;
 	}
 
+	// could very well use irq_domain_add_nomap()
 	domain = irq_domain_add_legacy(devnode, icu_info.nr_irqs,
 	                               irq_base, 0, &l4x_irq_domain_icu_ops,
 	                               (void *)icu);
@@ -138,7 +140,17 @@ static int domain_xlate_gic(struct irq_domain *d,
 	if (intsize < 3)
 		return -EINVAL;
 
-	*out_hwirq = intspec[1] + 32;
+	switch (intspec[0]) {
+		case 0: /* SPI */
+			*out_hwirq = intspec[1] + 32;
+			break;
+		case 1: /* PPI */
+			*out_hwirq = intspec[1] + 16;
+			break;
+		default:
+			return -EINVAL;
+	};
+
 	*out_type  = intspec[2] & IRQ_TYPE_SENSE_MASK;
 
 	return 0;
@@ -238,31 +250,15 @@ int __init irq_l4icu_init(struct device_node *node,
 	return 0;
 }
 
-/* This needs to be in the boards matches table in case there are other
-   irq-controllers too */
-static const struct of_device_id irq_matches[] = {
-	{
-		.compatible = "l4,icu",
-		.data       = irq_l4icu_init,
-	},
-	{}
-};
-
-static void __init l4x_mach_init_of_irq(void)
-{
-	if (L4X_PLATFORM_INIT_GENERIC)
-		of_irq_init(irq_matches);
-}
-#endif
+IRQCHIP_DECLARE(l4lx_l4icu, "l4,icu", irq_l4icu_init);
+#endif /* OF */
 
 static void __init l4x_mach_init_irq(void)
 {
+	irqchip_init();
+
 	/* Call our generic IRQ handling code */
 	l4lx_irq_init();
-
-#ifdef CONFIG_OF
-	l4x_mach_init_of_irq();
-#endif
 
 	if (!l4x_of_found_l4icu)
 		init_icu_irqs(NULL, l4io_request_icu());
@@ -409,7 +405,7 @@ static void __init l4x_arm_timer_init(void)
 #ifdef CONFIG_COMMON_CLK
 	of_clk_init(NULL);
 #endif
-	clocksource_probe();
+	timer_probe();
 
 	if (0)
 		setup_delay_counter();
