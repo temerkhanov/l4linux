@@ -3,7 +3,7 @@
 #
 
 obj-y		:= process.o sys_arm.o time.o traps.o stacktrace.o \
-                   switch_to.o setup.o l4.o signal.o irq.o \
+                   switch_to.o setup.o signal.o irq.o \
                    ptrace.o entry.o dispatch.o io.o elf.o \
                    return_address.o head.o opcodes.o sigreturn_codes.o \
                    reboot.o
@@ -17,11 +17,9 @@ obj-$(CONFIG_ISA_DMA_API)	+= dma.o
 obj-$(CONFIG_MODULES)		+= armksyms.o module.o
 obj-$(CONFIG_ARM_MODULE_PLTS)	+= module-plts.o
 obj-$(CONFIG_SMP)		+= smp.o
-obj-$(CONFIG_SMP)		+= platsmp.o
 ifdef CONFIG_MMU
 obj-$(CONFIG_SMP)		+= smp_tlb.o
 endif
-obj-$(CONFIG_HOTPLUG_CPU)	+= hotplug.o
 obj-$(CONFIG_FUNCTION_TRACER)	+= entry-ftrace.o
 obj-$(CONFIG_DYNAMIC_FTRACE)	+= ftrace.o insn.o
 obj-$(CONFIG_FUNCTION_GRAPH_TRACER)	+= ftrace.o insn.o

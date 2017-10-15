@@ -755,6 +755,9 @@ static inline int l4x_dispatch_exception(struct task_struct *p,
 				return 0;
 			do_int3(regs, err);
 			break;
+		case X86_TRAP_UD:
+			do_invalid_op(regs, err);
+			break;
 		case X86_TRAP_GP:
 #ifndef CONFIG_L4_VCPU
 			if (l4x_hybrid_begin(p, t))
@@ -764,6 +767,9 @@ static inline int l4x_dispatch_exception(struct task_struct *p,
 		case X86_TRAP_PF:
 			if (l4x_port_emulation(regs))
 				return 0;
+
+			do_general_protection(regs, err);
+			break;
 		default:
 			goto unknown_fault;
 	}

@@ -408,6 +408,7 @@ endif
 ifeq ($(BASEARCH),arm)
 core-$(CONFIG_VDSO)		+= arch/arm/vdso/
 core-y				+= arch/l4/common/arch-arm/
+core-y				+= arch/l4/arm-mach-l4/
 core-y				+= arch/arm/net/
 endif
 
@@ -450,7 +451,7 @@ KBUILD_CPPFLAGS += -I$(objtree)/arch/l4/include/asm/l4-arch \
                    $(if $(PLATFORMNAME),-I$(src)/arch/l4/include/asm/mach-$(LINSRCARCH)/$(PLATFORMNAME)) \
                    $(if $(PLATFORMNAME),-I$(src)/arch/l4/include/asm/plat-$(LINSRCARCH)/$(PLATFORMNAME)) \
                    -I$(src)/arch/$(LINSRCARCH)/include \
-                   -I$(srctree)/arch/l4/include/asm/arch-$(LINSRCARCH) \
+                   $(if $(CONFIG_L4_ARCH_ARM),-I$(srctree)/arch/l4/arm-mach-l4/include) \
                    -I$(objtree)/arch/l4/include/asm/orig-arch \
                    -I$(objtree)/arch/l4/include \
                    -I$(src)/arch/$(LINSRCARCH)/include/uapi \

@@ -56,7 +56,6 @@
 #include <asm/generic/smp.h>
 #include <asm/generic/stack_id.h>
 #include <asm/generic/log.h>
-#include <asm/mach/smp.h>
 #include <l4/util/util.h>
 
 /*
