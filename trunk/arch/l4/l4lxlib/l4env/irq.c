@@ -74,9 +74,9 @@ static inline int attach_to_irq(struct irq_desc *desc, l4_cap_idx_t irq_cap)
 	long ret;
 	struct l4x_irq_desc_private *p = irq_desc_get_chip_data(desc);
 
-	if ((ret  = l4_error(l4_irq_attach(irq_cap,
-	                                   irq_desc_get_irq_data(desc)->irq << 2,
-	                                   l4lx_thread_get_cap(p->irq_thread)))))
+	if ((ret  = l4_error(l4_rcv_ep_bind_thread(irq_cap,
+	                                           l4lx_thread_get_cap(p->irq_thread),
+	                                           irq_desc_get_irq_data(desc)->irq << 2))))
 		dd_printk("%s: can't attach to irq %u: %ld\n",
 		          __func__, desc->irq, ret);
 
@@ -161,7 +161,7 @@ static inline void wait_for_irq_message(unsigned irq, l4_cap_idx_t irq_cap)
 					detach_from_interrupt(desc, irq,
 					                      irq_cap);
 			} else if (cmd == CMD_IRQ_UPDATE) {
-				l4x_prepare_irq_thread(l4x_current_stack_pointer(),
+				l4x_prepare_irq_thread(current_stack_pointer,
 				                       get_irq_cpu(irq));
 			} else
 				LOG_printf("Unknown cmd: %lu (enabled: %d)\n",
@@ -193,7 +193,7 @@ static L4_CV void irq_thread(void *data)
 	*d->taken_out = 1;
 	d = NULL;
 
-	l4x_prepare_irq_thread(l4x_current_stack_pointer(), get_irq_cpu(irq));
+	l4x_prepare_irq_thread(current_stack_pointer, get_irq_cpu(irq));
 	p->enabled = attach_to_irq(irq_to_desc(irq), irq_cap);
 
 	dd_printk("%s: Started IRQ thread for IRQ %d\n", __func__, irq);

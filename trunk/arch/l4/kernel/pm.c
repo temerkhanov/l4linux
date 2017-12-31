@@ -122,7 +122,7 @@ static int l4x_pm_plat_prepare(void)
 
 static void attach_to_irq(int irq, l4_cap_idx_t cap, l4_cap_idx_t t)
 {
-	int ret = L4XV_FN_e(l4_irq_attach(cap, irq << 2, t));
+	int ret = L4XV_FN_e(l4_rcv_ep_bind_thread(cap, t, irq << 2));
 	if (ret)
 		printk("Failed to attach wakeup source %d/%lx: %d\n",
 				irq, cap, ret);

@@ -47,8 +47,9 @@ static inline void attach_to_irq(struct irq_data *data)
 	unsigned cpu = p->is_percpu ? smp_processor_id() : p->cpu;
 	l4_cap_idx_t ic = get_irq(p);
 
-	if ((r = L4XV_FN_e(l4_irq_attach(ic, irq << 2,
-	                                 l4x_cpu_thread_get_cap(cpu)))))
+	if ((r = L4XV_FN_e(l4_rcv_ep_bind_thread(ic,
+	                                         l4x_cpu_thread_get_cap(cpu),
+	                                         irq << 2))))
 		dd_printk("%s: can't register to irq %u: return=%ld\n",
 		          __func__, irq, r);
 

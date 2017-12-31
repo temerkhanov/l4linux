@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __INCLUDUE__ASM__ARCH_ARM__VFP_H__
 #define __INCLUDUE__ASM__ARCH_ARM__VFP_H__
 

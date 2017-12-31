@@ -274,6 +274,20 @@ void write_pci_config(u8 bus, u8 slot, u8 func, u8 offset, u32 val)
 	                               offset, val, 32));
 }
 
+void write_pci_config_byte(u8 bus, u8 slot, u8 func, u8 offset, u8 val)
+{
+	L4XV_FN_v(l4vbus_pci_cfg_write(vbus, root_bridge,
+	                               bus, (slot << 16) | func,
+	                               offset, val, 8));
+}
+
+void write_pci_config_16(u8 bus, u8 slot, u8 func, u8 offset, u8 val)
+{
+	L4XV_FN_v(l4vbus_pci_cfg_write(vbus, root_bridge,
+	                               bus, (slot << 16) | func,
+	                               offset, val, 16));
+}
+
 #ifdef CONFIG_X86
 char * pcibios_setup(char *str)
 {

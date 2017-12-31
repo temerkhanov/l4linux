@@ -33,7 +33,7 @@ static inline void l4x_do_IRQ(int irq)
 	struct task_struct *t;
 
 	local_irq_save(flags);
-	t = l4x_do_I_setup_task(l4x_current_stack_pointer(), cpu);
+	t = l4x_do_I_setup_task(current_stack_pointer, cpu);
 	r = task_pt_regs(t);
 	old_cpu_state = l4x_get_cpu_mode(r);
 	l4x_set_cpu_mode(r, l4x_in_kernel() ? L4X_MODE_KERNEL : L4X_MODE_USER);
@@ -59,7 +59,7 @@ static inline void l4x_do_IPI(int vector)
 	struct task_struct *t;
 
 	local_irq_save(flags);
-	t = l4x_do_I_setup_task(l4x_current_stack_pointer(), cpu);
+	t = l4x_do_I_setup_task(current_stack_pointer, cpu);
 	r = task_pt_regs(t);
 	old_cpu_state = l4x_get_cpu_mode(r);
 	l4x_set_cpu_mode(r, l4x_in_kernel() ? L4X_MODE_KERNEL : L4X_MODE_USER);

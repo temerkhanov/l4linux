@@ -163,15 +163,10 @@ static void unmap_log_add(struct mm_struct *mm,
 }
 
 #ifdef CONFIG_X86
-void pte_update(struct mm_struct *mm, unsigned long addr, pte_t *ptep)
+void l4x_pte_update(struct mm_struct *mm, unsigned long addr, pte_t *ptep)
 {
 	l4x_pte_clear(mm, addr, *ptep);
 	l4x_unmap_log_flush();
-}
-
-void pte_update_defer(struct mm_struct *mm, unsigned long addr, pte_t *ptep)
-{
-	pte_update(mm, addr, ptep);
 }
 #endif /* X86 */
 
@@ -286,12 +281,12 @@ void _pmd_update(struct mm_struct *mm, unsigned long addr, pmd_t *pmdp)
 	l4x_unmap_log_flush();
 }
 
-void pmd_update(struct mm_struct *mm, unsigned long addr, pmd_t *pmdp)
+void l4x_pmd_update(struct mm_struct *mm, unsigned long addr, pmd_t *pmdp)
 {
 	_pmd_update(mm, addr, pmdp);
 }
 
-void pmd_update_defer(struct mm_struct *mm, unsigned long addr, pmd_t *pmdp)
+void l4x_pmd_update_defer(struct mm_struct *mm, unsigned long addr, pmd_t *pmdp)
 {
 	_pmd_update(mm, addr, pmdp);
 }

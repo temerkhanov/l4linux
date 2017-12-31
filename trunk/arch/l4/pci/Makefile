@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 
 ifneq ($(CONFIG_L4_VPCI),)
   obj-y             += l4vpci.o

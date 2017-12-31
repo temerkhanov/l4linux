@@ -205,6 +205,12 @@ static void smp_callin(void)
 	smp_store_cpu_info(cpuid);
 
 	/*
+	 * The topology information must be up to date before
+	 * calibrate_delay() and notify_cpu_starting().
+	 */
+	set_cpu_sibling_map(raw_smp_processor_id());
+
+	/*
 	 * Get our bogomips.
 	 * Update loops_per_jiffy in cpu_data. Previous call to
 	 * smp_store_cpu_info() stored a value that is close but not as
@@ -214,11 +220,6 @@ static void smp_callin(void)
 	cpu_data(cpuid).loops_per_jiffy = loops_per_jiffy;
 	pr_debug("Stack at about %p\n", &cpuid);
 
-	/*
-	 * This must be done before setting cpu_online_mask
-	 * or calling notify_cpu_starting.
-	 */
-	set_cpu_sibling_map(raw_smp_processor_id());
 	wmb();
 
 	notify_cpu_starting(cpuid);
@@ -238,18 +239,15 @@ static int enable_start_cpu0;
  */
 static void notrace start_secondary(void *unused)
 {
-	/*
-	 * Don't put *anything* before cpu_init(), SMP booting is too
-	 * fragile that we want to limit the things done here to the
-	 * most necessary things.
-	 */
 	l4x_cpu_ipi_setup(raw_smp_processor_id());
-	cpu_init();
-	x86_cpuinit.early_percpu_clock_init();
-	preempt_disable();
-	smp_callin();
 
-	enable_start_cpu0 = 0;
+	/*
+	 * Don't put *anything* except direct CPU state initialization
+	 * before cpu_init(), SMP booting is too fragile that we want to
+	 * limit the things done here to the most necessary things.
+	 */
+	if (boot_cpu_has(X86_FEATURE_PCID))
+		__write_cr4(__read_cr4() | X86_CR4_PCIDE);
 
 #ifdef CONFIG_X86_32
 	/* switch away from the initial page table */
@@ -259,6 +257,13 @@ static void notrace start_secondary(void *unused)
 	__flush_tlb_all();
 #endif
 
+	cpu_init();
+	x86_cpuinit.early_percpu_clock_init();
+	preempt_disable();
+	smp_callin();
+
+	enable_start_cpu0 = 0;
+
 	/* otherwise gcc will move up smp_processor_id before the cpu_init */
 	barrier();
 #ifndef CONFIG_L4
@@ -266,7 +271,6 @@ static void notrace start_secondary(void *unused)
 	 * Check TSC synchronization with the BP:
 	 */
 	check_tsc_sync_target();
-
 #endif /* L4 */
 
 	/*
@@ -1138,12 +1142,14 @@ int native_cpu_up(unsigned int cpu, struct task_struct *tidle)
 
 	pr_debug("++++++++++++++++++++=_---CPU UP  %u\n", cpu);
 
+#ifndef CONFIG_L4
 	if (apicid == BAD_APICID ||
 	    !physid_isset(apicid, phys_cpu_present_map) ||
 	    !apic->apic_id_valid(apicid)) {
 		pr_err("%s: bad cpu %d\n", __func__, cpu);
 		return -EINVAL;
 	}
+#endif /* L4 */
 
 	/*
 	 * Already booted CPU?
@@ -1402,6 +1408,12 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 
 	default_setup_apic_routing();
 	cpu0_logical_apicid = apic_bsp_setup(false);
+#else
+	{
+		unsigned cpu;
+		for_each_possible_cpu(cpu)
+			set_cpu_present(cpu, true);
+	}
 #endif /* L4 */
 
 	pr_info("CPU0: ");
@@ -1516,7 +1528,7 @@ __init void prefill_possible_map(void)
 
 	/* nr_cpu_ids could be reduced via nr_cpus= */
 	if (possible > nr_cpu_ids) {
-		pr_warn("%d Processors exceeds NR_CPUS limit of %d\n",
+		pr_warn("%d Processors exceeds NR_CPUS limit of %u\n",
 			possible, nr_cpu_ids);
 		possible = nr_cpu_ids;
 	}

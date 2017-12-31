@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/i386/kernel/head32.c -- prepare to run common code
  *
@@ -10,6 +11,7 @@
 #include <linux/mm.h>
 #include <linux/memblock.h>
 
+#include <asm/desc.h>
 #include <asm/setup.h>
 #include <asm/sections.h>
 #include <asm/e820/api.h>
@@ -19,6 +21,10 @@
 #include <asm/bios_ebda.h>
 #include <asm/tlbflush.h>
 #include <asm/bootparam_utils.h>
+
+#ifdef CONFIG_L4
+#include <asm/generic/smp.h>
+#endif /* L4 */
 
 static void __init i386_default_early_setup(void)
 {
@@ -31,7 +37,19 @@ static void __init i386_default_early_setup(void)
 
 asmlinkage __visible void __init i386_start_kernel(void)
 {
+#ifdef CONFIG_L4
+	x86_init.mpparse.find_smp_config = x86_init_noop;
+	x86_init.mpparse.get_smp_config = x86_init_uint_noop;
+#ifdef CONFIG_X86_LOCAL_APIC
+	smp_found_config = 1;
+#endif
+#endif /* L4 */
+
+	/* Make sure IDT is set up before any exception happens */
+	idt_setup_early_handler();
+
 	cr4_init_shadow();
+
 	sanitize_boot_params(&boot_params);
 
 	x86_early_init_platform_quirks();

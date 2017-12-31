@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0
+
 b := ../../../x86/kvm
 
 KBUILD_CPPFLAGS := -I$(srctree)/arch/x86/kvm $(KBUILD_CPPFLAGS)
