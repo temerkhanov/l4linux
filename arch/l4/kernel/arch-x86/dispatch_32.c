@@ -10,11 +10,11 @@
 static inline void l4x_print_regs(unsigned long err, unsigned long trapno,
                                   struct pt_regs *r)
 {
-	printk("ip: %02lx:%08lx sp: %08lx err: %08lx trp: %08lx\n",
+	printk("ip: %02x:%08lx sp: %08lx err: %08lx trp: %08lx\n",
 	       r->cs, r->ip, r->sp, err, trapno);
 	printk("ax: %08lx bx: %08lx  cx: %08lx  dx: %08lx\n",
 	       r->ax, r->bx, r->cx, r->dx);
-	printk("di: %08lx si: %08lx  bp: %08lx  gs: %08lx fs: %08lx\n",
+	printk("di: %08lx si: %08lx  bp: %08lx  gs: %08x fs: %08x\n",
 	       r->di, r->si, r->bp, r->gs, r->fs);
 }
 

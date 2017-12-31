@@ -6,6 +6,9 @@
 #ifdef CONFIG_HUGETLB_PAGE
 #include <linux/hugetlb.h>
 #endif
+#ifdef CONFIG_PREEMPT
+#include <linux/sched/debug.h>
+#endif
 
 #include <l4/sys/cache.h>
 #include <l4/sys/thread.h>

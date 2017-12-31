@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/export.h>
@@ -43,10 +44,6 @@
  */
 void (*pm_power_off)(void);
 EXPORT_SYMBOL(pm_power_off);
-
-#ifndef CONFIG_L4
-static const struct desc_ptr no_idt = {};
-#endif /* L4 */
 
 /*
  * This is set if we need to go through the 'emergency' path.
@@ -116,6 +113,10 @@ void __noreturn machine_real_restart(unsigned int type)
 	load_cr3(initial_page_table);
 #else
 	write_cr3(real_mode_header->trampoline_pgd);
+
+	/* Exiting long mode will fail if CR4.PCIDE is set. */
+	if (static_cpu_has(X86_FEATURE_PCID))
+		cr4_clear_bits(X86_CR4_PCIDE);
 #endif
 
 	/* Jump to the identity-mapped low memory code */
@@ -161,7 +162,7 @@ static int __init set_kbd_reboot(const struct dmi_system_id *d)
 /*
  * This is a single dmi_table handling all reboot quirks.
  */
-static struct dmi_system_id __initdata reboot_dmi_table[] = {
+static const struct dmi_system_id reboot_dmi_table[] __initconst = {
 
 	/* Acer */
 	{	/* Handle reboot issue on Acer Aspire one */
@@ -651,7 +652,7 @@ static void native_machine_emergency_restart(void)
 			break;
 
 		case BOOT_TRIPLE:
-			load_idt(&no_idt);
+			idt_invalidate(NULL);
 			__asm__ __volatile__("int3");
 
 			/* We're probably dead after this, but... */

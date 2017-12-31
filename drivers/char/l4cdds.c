@@ -176,7 +176,7 @@ static int __init init_one(unsigned idx)
 	if (!device_create(l4cdds_class, NULL,
 	                   MKDEV(major_num, idx), NULL,
 	                   device[idx].name)) {
-		printk("l4cdds: Device creation failed\n");
+		pr_err("l4cdds: Device creation failed\n");
 		return -ENODEV;
 	}
 
@@ -186,7 +186,7 @@ static int __init init_one(unsigned idx)
 		                                    &device[idx].dscap,
 		                                    &device[idx].addr,
 		                                    &stat, 1))) {
-			printk("Failed to get file: %s(%d)\n",
+			pr_err("Failed to get file: %s(%d)\n",
 			       l4sys_errtostr(ret), ret);
 			return ret;
 		}
@@ -194,7 +194,7 @@ static int __init init_one(unsigned idx)
 		if ((ret = l4x_query_and_get_ds(device[idx].name, "l4cdds",
 		                                &device[idx].dscap,
 		                                &device[idx].addr, &stat))) {
-			printk("Failed to get file: %s(%d)\n",
+			pr_err("Failed to get file: %s(%d)\n",
 			       l4sys_errtostr(ret), ret);
 			return ret;
 		}
@@ -202,9 +202,9 @@ static int __init init_one(unsigned idx)
 
 	device[idx].size = stat.size;
 
-	printk("l4cdds: Data '%s' size = %lu KB (%lu MB) dev=%d:%d flags=%lx\n",
-	       device[idx].name, device[idx].size >> 10, device[idx].size >> 20,
-	       major_num, idx, stat.flags);
+	pr_info("l4cdds: Data '%s' size = %lu KB (%lu MB) dev=%d:%d flags=%lx\n",
+	        device[idx].name, device[idx].size >> 10, device[idx].size >> 20,
+	        major_num, idx, stat.flags);
 
 	return 0;
 }
@@ -214,17 +214,21 @@ static int __init l4cdds_init(void)
 	int i;
 
 	if (!devs_pos) {
-		printk("l4cdds: No name given, not starting.\n");
+		pr_info("l4cdds: No name given, not starting.\n");
 		return 0;
 	}
 
 	major_num = register_chrdev(major_num, "l4cdds", &fops);
 	if (major_num <= 0) {
-		printk("l4cdds: Unable to register chrdev\n");
+		pr_err("l4cdds: Unable to register chrdev\n");
 		return -ENODEV;
 	}
 
 	l4cdds_class = class_create(THIS_MODULE, "l4cdds");
+	if (IS_ERR(l4cdds_class)) {
+		unregister_chrdev(major_num, "l4cdds");
+		return PTR_ERR(l4cdds_class);
+	}
 
 	for (i = 0; i < devs_pos; ++i)
 		init_one(i);
@@ -263,7 +267,7 @@ static int l4cdds_setup(const char *val, struct kernel_param *kp)
 	unsigned s;
 
 	if (devs_pos >= NR_DEVS) {
-		printk("l4cdds: Too many character devices specified\n");
+		pr_err("l4cdds: Too many character devices specified\n");
 		return 1;
 	}
 	if ((p = strstr(val, ",rw")))

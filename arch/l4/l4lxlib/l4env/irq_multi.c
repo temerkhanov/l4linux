@@ -75,8 +75,9 @@ static void attach_to_IRQ(unsigned int irq)
 	int ret;
 
 	/* Associate INTR */
-	if ((ret = l4_error(l4_irq_attach(irq_caps[irq], irq << 2,
-	                                  l4lx_thread_get_cap(irq_ths[0 * smp_processor_id()])))))
+	if ((ret = l4_error(l4_rcv_ep_bind_thread(irq_caps[irq],
+	                                          l4lx_thread_get_cap(irq_ths[0 * smp_processor_id()]),
+	                                          irq << 2))))
 		dd_printk("%s: can't register to irq %u: return=%d\n",
 		          __func__, irq, ret);
 	if ((ret = l4_error(l4_irq_unmask(irq_caps[irq]))) != L4_PROTO_IRQ)
@@ -162,7 +163,7 @@ wait_for_irq_message(unsigned cpu, unsigned int irq_to_ack)
 				    && irq_disable_cmd_state[irq]) {
 				}
 			} else if (cmd == CMD_IRQ_UPDATE) {
-				l4x_prepare_irq_thread(l4x_current_stack_pointer(),
+				l4x_prepare_irq_thread(current_stack_pointer,
 				                       get_irq_cpu(irq));
 			} else
 				LOG_printf("Unknown cmd: %u %lu\n", cmd, irq_state[irq]);
@@ -179,7 +180,7 @@ static L4_CV void irq_thread(void *data)
 	unsigned cpu = *(unsigned *)data;
 	unsigned int irq = 0;
 
-	l4x_prepare_irq_thread(l4x_current_stack_pointer(), 0);
+	l4x_prepare_irq_thread(current_stack_pointer, 0);
 
 	d_printk("%s: Starting IRQ thread on CPU %d\n", __func__, cpu);
 

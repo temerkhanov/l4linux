@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *	Intel IO-APIC support for multi-Pentium hosts.
  *
@@ -1250,7 +1251,7 @@ static void io_apic_print_entries(unsigned int apic, unsigned int nr_entries)
 			 entry.vector, entry.irr, entry.delivery_status);
 		if (ir_entry->format)
 			printk(KERN_DEBUG "%s, remapped, I(%04X),  Z(%X)\n",
-			       buf, (ir_entry->index << 15) | ir_entry->index,
+			       buf, (ir_entry->index2 << 15) | ir_entry->index,
 			       ir_entry->zero);
 		else
 			printk(KERN_DEBUG "%s, %s, D(%02X), M(%1d)\n",
@@ -2747,6 +2748,7 @@ static int find_free_ioapic_entry(void)
 
 	return MAX_IO_APICS;
 }
+#endif /* L4 */
 
 /**
  * mp_register_ioapic - Register an IOAPIC device
@@ -2758,6 +2760,7 @@ static int find_free_ioapic_entry(void)
 int mp_register_ioapic(int id, u32 address, u32 gsi_base,
 		       struct ioapic_domain_cfg *cfg)
 {
+#ifndef CONFIG_L4
 	bool hotplug = !!ioapic_initialized;
 	struct mp_ioapic_gsi *gsi_cfg;
 	int idx, ioapic, entries;
@@ -2846,9 +2849,11 @@ int mp_register_ioapic(int id, u32 address, u32 gsi_base,
 		mpc_ioapic_ver(idx), mpc_ioapic_addr(idx),
 		gsi_cfg->gsi_base, gsi_cfg->gsi_end);
 
+#endif /* L4 */
 	return 0;
 }
 
+#ifndef CONFIG_L4
 int mp_unregister_ioapic(u32 gsi_base)
 {
 	int ioapic, pin;
@@ -3037,11 +3042,13 @@ int mp_irqdomain_ioapic_idx(struct irq_domain *domain)
 {
 	return (int)(long)domain->host_data;
 }
+#endif /* ! L4 */
 
 const struct irq_domain_ops mp_ioapic_irqdomain_ops = {
+#ifndef CONFIG_L4
 	.alloc		= mp_irqdomain_alloc,
 	.free		= mp_irqdomain_free,
 	.activate	= mp_irqdomain_activate,
 	.deactivate	= mp_irqdomain_deactivate,
+#endif /* L4 */
 };
-#endif /* ! L4 */

@@ -36,7 +36,7 @@
 
 #else /* !CONFIG_MMU */
 		.macro	addruart_current, rx, tmp1, tmp2
-		addruart	\rx, \tmp1
+		addruart	\rx, \tmp1, \tmp2
 		.endm
 
 #endif /* CONFIG_MMU */
@@ -121,7 +121,11 @@ ENTRY(printascii)
 		mov	r1, r0
 		mov	r0, #0x04		@ SYS_WRITE0
 	ARM(	svc	#0x123456	)
+#ifdef CONFIG_CPU_V7M
+	THUMB(	bkpt	#0xab		)
+#else
 	THUMB(	svc	#0xab		)
+#endif
 		ret	lr
 ENDPROC(printascii)
 
@@ -130,7 +134,11 @@ ENTRY(printch)
 		strb	r0, [r1]
 		mov	r0, #0x03		@ SYS_WRITEC
 	ARM(	svc	#0x123456	)
+#ifdef CONFIG_CPU_V7M
+	THUMB(	bkpt	#0xab		)
+#else
 	THUMB(	svc	#0xab		)
+#endif
 		ret	lr
 ENDPROC(printch)
 #endif /* L4 */

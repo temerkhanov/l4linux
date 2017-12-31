@@ -10,7 +10,6 @@ enum {
 
 #include <asm/thread_info.h>
 #include <asm/generic/vcpu.h>
-#include <asm/l4x/stack.h>
 
 #ifndef CONFIG_L4_VCPU
 
@@ -42,7 +41,7 @@ static inline void l4x_stack_set(unsigned long some_sp, l4_utcb_t *u)
 
 static inline l4_utcb_t *l4x_utcb_current(void)
 {
-	return l4x_stack_struct_get(l4x_current_stack_pointer())->utcb;
+	return l4x_stack_struct_get(current_stack_pointer)->utcb;
 }
 
 #else /* L4_VCPU */

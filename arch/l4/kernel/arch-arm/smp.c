@@ -384,7 +384,7 @@ asmlinkage void secondary_start_kernel(void)
 	struct mm_struct *mm = &init_mm;
 	unsigned int cpu;
 
-	l4x_stack_set(l4x_current_stack_pointer(), l4_utcb());
+	l4x_stack_set(current_stack_pointer, l4_utcb());
 
 	/*
 	 * The identity mapping is uncached (strongly ordered), so

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ASM_L4__ARCH_ARM__BUG_H__
 #define __ASM_L4__ARCH_ARM__BUG_H__
 

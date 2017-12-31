@@ -98,6 +98,9 @@
 #include <l4/rtc/rtc.h>
 #endif
 #include <asm/l4x/smp.h>
+#ifdef CONFIG_X86_LOCAL_APIC
+#include <asm/smp.h>
+#endif
 #endif /* X86 */
 
 L4_CV void l4x_external_exit(int);
@@ -175,12 +178,7 @@ L4_EXTERNAL_FUNC(l4x_srv_register_c);
 
 
 #ifdef CONFIG_X86
-struct desc_struct cpu_gdt_table[GDT_ENTRIES];
 u32 *trampoline_cr4_features;
-#ifdef CONFIG_X86_32
-struct desc_ptr early_gdt_descr;
-struct desc_ptr idt_descr = { .size = IDT_ENTRIES*8-1, .address = (unsigned long)idt_table };
-#endif
 
 unsigned l4x_x86_fiasco_gdt_entry_offset;
 unsigned l4x_x86_fiasco_user_cs;
@@ -193,8 +191,6 @@ struct l4x_segment_user_state_t l4x_current_user_segments[NR_CPUS];
 #endif
 
 unsigned long l4x_fixmap_space_start;
-
-void ia32_sysenter_target(void) {}
 
 l4_utcb_t *l4x_utcb_pointer[L4X_UTCB_POINTERS];
 #endif /* x86 */
@@ -1704,7 +1700,7 @@ static __noreturn L4_CV void l4x_cpu_ipi_thread(void *x)
 	int err;
 	l4_utcb_t *utcb = l4_utcb();
 
-	l4x_prepare_irq_thread(l4x_current_stack_pointer(), cpu);
+	l4x_prepare_irq_thread(current_stack_pointer, cpu);
 
 	// wait until parent has setup our cap and attached us
 	while (l4_is_invalid_cap(l4x_cpu_ipi_irqs[cpu])) {
@@ -1803,11 +1799,12 @@ void l4x_cpu_ipi_setup(unsigned cpu)
 	l4x_dbg_set_object_name(c, "ipi%d", cpu);
 
 #ifdef CONFIG_L4_VCPU
-	t = l4_irq_attach(c, L4X_VCPU_IRQ_IPI << 2,
-	                  l4lx_thread_get_cap(l4x_cpu_threads[cpu]));
+	t = l4_rcv_ep_bind_thread(c, l4lx_thread_get_cap(l4x_cpu_threads[cpu]),
+	                          L4X_VCPU_IRQ_IPI << 2);
 #else
-	t = l4_irq_attach(c, 0,
-	                  l4lx_thread_get_cap(l4x_cpu_ipi_threads[cpu]));
+	t = l4_rcv_ep_bind_thread(c,
+	                          l4lx_thread_get_cap(l4x_cpu_ipi_threads[cpu]),
+	                          0);
 #endif
 	if (l4_error(t))
 		l4x_exit_l4linux_msg("Failed to attach IPI IRQ%d\n", cpu);
@@ -1847,7 +1844,7 @@ static L4_CV void __cpu_starter(void *data)
 	int cpu = *(int *)data;
 	l4_utcb_t *u = l4_utcb();
 
-	l4x_stack_set(l4x_current_stack_pointer(), u);
+	l4x_stack_set(current_stack_pointer, u);
 
 #ifdef CONFIG_X86
 	load_percpu_segment(cpu);
@@ -2183,6 +2180,10 @@ static __init int l4x_cpu_virt_phys_map_init(const char *boot_command_line)
 	}
 #endif
 
+#ifdef CONFIG_X86_LOCAL_APIC
+	num_processors = l4x_nr_cpus;
+#endif
+
 	return 0;
 }
 
@@ -2223,7 +2224,7 @@ static L4_CV void __init cpu0_startup(void *data)
 	l4_cap_idx_t cpu0id = l4x_cpu_thread_get_cap(0);
 	struct thread_info *ti;
 
-	l4x_stack_set(l4x_current_stack_pointer(), l4_utcb());
+	l4x_stack_set(current_stack_pointer, l4_utcb());
 
 #ifdef CONFIG_X86
 	load_percpu_segment(0);

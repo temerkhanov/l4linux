@@ -1,4 +1,5 @@
 #include <linux/module.h>
+#include <linux/sched.h>
 
 #include <asm/linkage.h>
 #include <asm/api/macros.h>

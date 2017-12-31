@@ -78,14 +78,20 @@ static inline void vcpu_to_ptregs_kern(l4_vcpu_state_t *v,
                                        struct pt_regs *regs)
 {
 	vcpu_to_ptregs_common(v, regs);
+#ifdef CONFIG_X86_64
 	regs->cs = regs->cs & ~SEGMENT_RPL_MASK;
+#else
+	regs->cs = 0;
+#endif
 }
 
 static inline void vcpu_to_ptregs_user(l4_vcpu_state_t *v,
                                        struct pt_regs *regs)
 {
 	vcpu_to_ptregs_common(v, regs);
+#ifdef CONFIG_X86_64
 	regs->cs = (regs->cs & ~SEGMENT_RPL_MASK) | USER_RPL;
+#endif
 }
 
 static inline void ptregs_to_vcpu(l4_vcpu_state_t *v,
