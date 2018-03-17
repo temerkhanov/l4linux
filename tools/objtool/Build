@@ -1,4 +1,4 @@
-objtool-y += arch/$(SRCARCH)/
+objtool-y += arch/$(if $(filter l4,$(SRCARCH)),$(L4X_SRCARCH),$(SRCARCH))/
 objtool-y += builtin-check.o
 objtool-y += builtin-orc.o
 objtool-y += check.o

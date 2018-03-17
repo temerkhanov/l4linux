@@ -177,9 +177,10 @@ static inline void arch_exit_mmap(struct mm_struct *mm)
 	mm->context.l4x_unmap_mode = L4X_UNMAP_MODE_SKIP;
 }
 
-static inline void arch_dup_mmap(struct mm_struct *oldmm,
-				 struct mm_struct *mm)
+static inline int arch_dup_mmap(struct mm_struct *oldmm,
+				struct mm_struct *mm)
 {
+	return 0;
 }
 
 static inline void arch_unmap(struct mm_struct *mm,

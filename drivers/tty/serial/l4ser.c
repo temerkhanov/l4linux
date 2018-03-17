@@ -344,11 +344,26 @@ l4ser_console_setup(struct console *co, char *options)
 static void
 l4ser_console_write(struct console *co, const char *s, unsigned int count)
 {
+	l4_cap_idx_t cap = l4ser_port[co->index].vcon_cap;
 	do {
+		unsigned i;
 		unsigned c = count;
 		if (c > L4_VCON_WRITE_SIZE)
 			c = L4_VCON_WRITE_SIZE;
-		L4XV_FN_v(l4_vcon_write(l4ser_port[co->index].vcon_cap, s, c));
+
+		for (i = 0; i < c;) {
+			if (s[i] == '\n')  {
+				L4XV_FN_v(l4_vcon_write(cap, s, i));
+				L4XV_FN_v(l4_vcon_write(cap, "\r\n", 2));
+				s += i + 1;
+				count -= i + 1;
+				c -= i + 1;
+				i = 0;
+			} else {
+				++i;
+			}
+		}
+		L4XV_FN_v(l4_vcon_write(cap, s, c));
 		s += c;
 		count -= c;
 	} while (count);
@@ -625,7 +640,7 @@ module_exit(l4ser_serial_exit);
 
 /* This function is called much earlier than module_init, esp. there's
  * no kmalloc available */
-static int l4ser_setup(const char *val, struct kernel_param *kp)
+static int l4ser_setup(const char *val, const struct kernel_param *kp)
 {
 	if (nr_capnames > UART_NR) {
 		pr_err("l4ser: Too many additional ports specified\n");

@@ -3,15 +3,15 @@
 
 struct dentry *l4x_debugfs_dir;
 
-u32 l4x_dbg_stop_on_segv_pf;
+u32 l4x_dbg_feature_1;
 
 static int __init dbg_setup(char *s)
 {
-	l4x_dbg_stop_on_segv_pf = simple_strtoul(s, NULL, 0);
+	l4x_dbg_feature_1 = simple_strtoul(s, NULL, 0);
 	return 1;
 }
 
-__setup("l4x_dbg_stop_on_segv_pf=", dbg_setup);
+__setup("l4x_dbg_feature_1=", dbg_setup);
 
 #ifdef CONFIG_L4_DEBUG_STATS
 extern struct l4x_debug_stats l4x_debug_stats_data;
@@ -87,8 +87,8 @@ static int __init l4x_debugfs_init(void)
 		return err;
 	}
 
-	debugfs_create_u32("stop_on_segv_pf", S_IWUSR | S_IRUSR,
-	                   l4x_debugfs_dir, &l4x_dbg_stop_on_segv_pf);
+	debugfs_create_u32("l4x_dbg_feature_1", S_IWUSR | S_IRUSR,
+	                   l4x_debugfs_dir, &l4x_dbg_feature_1);
 
 #ifdef CONFIG_L4_DEBUG_STATS
 	err = stats_init();

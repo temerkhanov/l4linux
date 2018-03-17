@@ -4,7 +4,7 @@
 
 quiet_cmd_localinst = LOCINST $@
       cmd_localinst = ([ -x "$(srctree)/arch/l4/install.local" ] && \
-                       $(srctree)/arch/l4/install.local $@ $(BASEARCH)) || true
+                       $(srctree)/arch/l4/install.local $@ $(L4X_SRCARCH)) || true
 
 OBJCOPYFLAGS_Image := -R .note -R .comment -S
 $(obj)/Image: vmlinux FORCE

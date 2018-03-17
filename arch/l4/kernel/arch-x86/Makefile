@@ -25,13 +25,16 @@ endif
 KASAN_SANITIZE_head$(BITS).o				:= n
 KASAN_SANITIZE_dumpstack.o				:= n
 KASAN_SANITIZE_dumpstack_$(BITS).o			:= n
-KASAN_SANITIZE_stacktrace.o := n
+KASAN_SANITIZE_stacktrace.o				:= n
+KASAN_SANITIZE_paravirt.o				:= n
 
-OBJECT_FILES_NON_STANDARD_head_$(BITS).o		:= y
 OBJECT_FILES_NON_STANDARD_relocate_kernel_$(BITS).o	:= y
-OBJECT_FILES_NON_STANDARD_ftrace_$(BITS).o		:= y
 OBJECT_FILES_NON_STANDARD_test_nx.o			:= y
 OBJECT_FILES_NON_STANDARD_paravirt_patch_$(BITS).o	:= y
+
+ifdef CONFIG_FRAME_POINTER
+OBJECT_FILES_NON_STANDARD_ftrace_$(BITS).o		:= y
+endif
 
 # If instrumentation of this dir is enabled, boot hangs during first second.
 # Probably could be more selective here, but note that files related to irqs,
@@ -129,10 +132,11 @@ obj-$(CONFIG_EFI)			+= sysfb_efi.o
 obj-$(CONFIG_PERF_EVENTS)		+= perf_regs.o
 obj-$(CONFIG_TRACING)			+= tracepoint.o
 obj-$(CONFIG_SCHED_MC_PRIO)		+= itmt.o
+obj-$(CONFIG_X86_INTEL_UMIP)		+= umip.o
 
-obj-$(CONFIG_ORC_UNWINDER)		+= unwind_orc.o
-obj-$(CONFIG_FRAME_POINTER_UNWINDER)	+= unwind_frame.o
-obj-$(CONFIG_GUESS_UNWINDER)		+= unwind_guess.o
+obj-$(CONFIG_UNWINDER_ORC)		+= unwind_orc.o
+obj-$(CONFIG_UNWINDER_FRAME_POINTER)	+= unwind_frame.o
+obj-$(CONFIG_UNWINDER_GUESS)		+= unwind_guess.o
 
 ###
 # 64 bit specific files
@@ -161,14 +165,14 @@ $(call L4X_FILEREF, ../../../x86/kernel,                         \
        io_delay irq_64 irq_work jump_label kdebugfs ksysfs ldt   \
        module mpparse nmi pci-dma pci-iommu_table pci-nommu      \
        pci-swiotlb perf_regs platform-quirks preempt probe_roms  \
-       quirks resource rtc                                       \
+       quirks resource rtc itmt umip                             \
        setup_percpu signal_compat stacktrace step sys_x86_64     \
        syscall_32                                                \
        syscall_64 sysfb test_rodata time tls topology            \
        trace_clock tsc_msr tsc_sync                              \
        vread_tsc_64 vsmp_64 vsyscall_emu_64 vsyscall_gtod        \
        ftrace mcount_64 tracepoint unwind_frame unwind_guess     \
-       uprobes)
+       unwind_orc uprobes)
 
 # syscall_table_32.S
 KBUILD_AFLAGS	+= -Iarch/x86/kernel

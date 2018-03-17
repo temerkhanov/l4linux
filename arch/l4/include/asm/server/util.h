@@ -1,6 +1,7 @@
 #pragma once
 
 #include <l4/re/util/event_buffer>
+#include <l4/re/util/unique_cap>
 
 namespace L4x_server_util
 {
@@ -10,8 +11,7 @@ int
 get_event_buffer(unsigned size, L4Re::Util::Event_buffer_t<T> *evbuf,
                  L4::Cap<L4Re::Dataspace> *ds)
 {
-	L4Re::Util::Auto_cap<L4Re::Dataspace>::Cap b
-		= L4Re::Util::cap_alloc.alloc<L4Re::Dataspace>();
+	auto b = L4Re::Util::make_unique_cap<L4Re::Dataspace>();
 	if (!b.is_valid())
 		return -L4_ENOMEM;
 

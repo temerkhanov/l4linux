@@ -15,6 +15,7 @@
 #include <asm/fpu/xstate.h>
 
 #include <asm/tlbflush.h>
+#include <asm/cpufeature.h>
 
 /*
  * Although we spell it out in here, the Processor Trace
@@ -35,6 +36,21 @@ static const char *xfeature_names[] =
 	"Protection Keys User registers",
 	"unknown xstate feature"	,
 };
+
+#ifndef CONFIG_L4
+static short xsave_cpuid_features[] __initdata = {
+	X86_FEATURE_FPU,
+	X86_FEATURE_XMM,
+	X86_FEATURE_AVX,
+	X86_FEATURE_MPX,
+	X86_FEATURE_MPX,
+	X86_FEATURE_AVX512F,
+	X86_FEATURE_AVX512F,
+	X86_FEATURE_AVX512F,
+	X86_FEATURE_INTEL_PT,
+	X86_FEATURE_PKU,
+};
+#endif /* L4 */
 
 /*
  * Mask of xstate features supported by the CPU and the kernel:
@@ -59,26 +75,6 @@ unsigned int fpu_user_xstate_size;
 void fpu__xstate_clear_all_cpu_caps(void)
 {
 	setup_clear_cpu_cap(X86_FEATURE_XSAVE);
-	setup_clear_cpu_cap(X86_FEATURE_XSAVEOPT);
-	setup_clear_cpu_cap(X86_FEATURE_XSAVEC);
-	setup_clear_cpu_cap(X86_FEATURE_XSAVES);
-	setup_clear_cpu_cap(X86_FEATURE_AVX);
-	setup_clear_cpu_cap(X86_FEATURE_AVX2);
-	setup_clear_cpu_cap(X86_FEATURE_AVX512F);
-	setup_clear_cpu_cap(X86_FEATURE_AVX512IFMA);
-	setup_clear_cpu_cap(X86_FEATURE_AVX512PF);
-	setup_clear_cpu_cap(X86_FEATURE_AVX512ER);
-	setup_clear_cpu_cap(X86_FEATURE_AVX512CD);
-	setup_clear_cpu_cap(X86_FEATURE_AVX512DQ);
-	setup_clear_cpu_cap(X86_FEATURE_AVX512BW);
-	setup_clear_cpu_cap(X86_FEATURE_AVX512VL);
-	setup_clear_cpu_cap(X86_FEATURE_MPX);
-	setup_clear_cpu_cap(X86_FEATURE_XGETBV1);
-	setup_clear_cpu_cap(X86_FEATURE_AVX512VBMI);
-	setup_clear_cpu_cap(X86_FEATURE_PKU);
-	setup_clear_cpu_cap(X86_FEATURE_AVX512_4VNNIW);
-	setup_clear_cpu_cap(X86_FEATURE_AVX512_4FMAPS);
-	setup_clear_cpu_cap(X86_FEATURE_AVX512_VPOPCNTDQ);
 }
 
 /*
@@ -225,7 +221,6 @@ void fpstate_sanitize_xstate(struct fpu *fpu)
  */
 void fpu__init_cpu_xstate(void)
 {
-#ifndef CONFIG_L4
 	if (!boot_cpu_has(X86_FEATURE_XSAVE) || !xfeatures_mask)
 		return;
 	/*
@@ -238,6 +233,7 @@ void fpu__init_cpu_xstate(void)
 
 	xfeatures_mask &= ~XFEATURE_MASK_SUPERVISOR;
 
+#ifndef CONFIG_L4
 	cr4_set_bits(X86_CR4_OSXSAVE);
 	xsetbv(XCR_XFEATURE_ENABLED_MASK, xfeatures_mask);
 #endif /* L4 */
@@ -728,6 +724,9 @@ void __init fpu__init_system_xstate(void)
 	unsigned int eax, ebx, ecx, edx;
 	static int on_boot_cpu __initdata = 1;
 	int err;
+#ifndef CONFIG_L4
+	int i;
+#endif
 
 	WARN_ON_FPU(!on_boot_cpu);
 	on_boot_cpu = 0;
@@ -761,6 +760,18 @@ void __init fpu__init_system_xstate(void)
 		goto out_disable;
 	}
 
+#ifdef CONFIG_L4
+	xfeatures_mask &= xgetbv(XCR_XFEATURE_ENABLED_MASK);
+#else
+	/*
+	 * Clear XSAVE features that are disabled in the normal CPUID.
+	 */
+	for (i = 0; i < ARRAY_SIZE(xsave_cpuid_features); i++) {
+		if (!boot_cpu_has(xsave_cpuid_features[i]))
+			xfeatures_mask &= ~BIT(i);
+	}
+#endif
+
 	xfeatures_mask &= fpu__get_supported_xfeatures_mask();
 
 	/* Enable xstate instructions to be able to continue with initialization: */
@@ -775,6 +786,7 @@ void __init fpu__init_system_xstate(void)
 	 */
 	update_regset_xstate_info(fpu_user_xstate_size,	xfeatures_mask & ~XFEATURE_MASK_SUPERVISOR);
 
+	printk("%s %d: %llx\n", __func__, __LINE__, xfeatures_mask); 
 	fpu__init_prepare_fx_sw_frame();
 	setup_init_fpu_buf();
 	setup_xstate_comp();

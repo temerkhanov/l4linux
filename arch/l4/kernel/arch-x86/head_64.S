@@ -38,11 +38,12 @@
  *
  */
 
-#define p4d_index(x)	(((x) >> P4D_SHIFT) & (PTRS_PER_P4D-1))
 #define pud_index(x)	(((x) >> PUD_SHIFT) & (PTRS_PER_PUD-1))
 
+#if defined(CONFIG_XEN_PV) || defined(CONFIG_XEN_PVH)
 PGD_PAGE_OFFSET = pgd_index(__PAGE_OFFSET_BASE)
 PGD_START_KERNEL = pgd_index(__START_KERNEL_map)
+#endif
 L3_START_KERNEL = pud_index(__START_KERNEL_map)
 
 #ifdef CONFIG_L4
@@ -81,6 +82,7 @@ L3_START_KERNEL = pud_index(__START_KERNEL_map)
 	.code64
 	.globl startup_64
 startup_64:
+	UNWIND_HINT_EMPTY
 	/*
 	 * At this point the CPU runs in 64bit mode CS.L = 1 CS.D = 0,
 	 * and someone has loaded an identity mapped page table
@@ -120,6 +122,7 @@ startup_64:
 	addq	$(early_top_pgt - __START_KERNEL_map), %rax
 	jmp 1f
 ENTRY(secondary_startup_64)
+	UNWIND_HINT_EMPTY
 	/*
 	 * At this point the CPU runs in 64bit mode CS.L = 1 CS.D = 0,
 	 * and someone has loaded a mapped page table.
@@ -164,6 +167,7 @@ ENTRY(secondary_startup_64)
 	movq	$1f, %rax
 	jmp	*%rax
 1:
+	UNWIND_HINT_EMPTY
 
 	/* Check if nx is implemented */
 	movl	$0x80000001, %eax
@@ -181,9 +185,6 @@ ENTRY(secondary_startup_64)
 1:	wrmsr				/* Make changes effective */
 
 	/* Setup cr0 */
-#define CR0_STATE	(X86_CR0_PE | X86_CR0_MP | X86_CR0_ET | \
-			 X86_CR0_NE | X86_CR0_WP | X86_CR0_AM | \
-			 X86_CR0_PG)
 	movl	$CR0_STATE, %eax
 	/* Make changes effective */
 	movq	%rax, %cr0
@@ -266,7 +267,7 @@ ENTRY(secondary_startup_64)
 	pushq	%rax		# target address in negative space
 	lretq
 .Lafter_lret:
-ENDPROC(secondary_startup_64)
+END(secondary_startup_64)
 
 #include "verify_cpu.S"
 
@@ -278,6 +279,7 @@ ENDPROC(secondary_startup_64)
  */
 ENTRY(start_cpu0)
 	movq	initial_stack(%rip), %rsp
+	UNWIND_HINT_EMPTY
 	jmp	.Ljump_to_C_code
 ENDPROC(start_cpu0)
 #endif
@@ -299,26 +301,24 @@ ENDPROC(start_cpu0)
 	__FINITDATA
 
 #ifndef CONFIG_L4
-bad_address:
-	jmp bad_address
-
 	__INIT
 ENTRY(early_idt_handler_array)
-	# 104(%rsp) %rflags
-	#  96(%rsp) %cs
-	#  88(%rsp) %rip
-	#  80(%rsp) error code
 	i = 0
 	.rept NUM_EXCEPTION_VECTORS
-	.ifeq (EXCEPTION_ERRCODE_MASK >> i) & 1
-	pushq $0		# Dummy error code, to make stack frame uniform
+	.if ((EXCEPTION_ERRCODE_MASK >> i) & 1) == 0
+		UNWIND_HINT_IRET_REGS
+		pushq $0	# Dummy error code, to make stack frame uniform
+	.else
+		UNWIND_HINT_IRET_REGS offset=8
 	.endif
 	pushq $i		# 72(%rsp) Vector number
 	jmp early_idt_handler_common
+	UNWIND_HINT_IRET_REGS
 	i = i + 1
 	.fill early_idt_handler_array + i*EARLY_IDT_HANDLER_SIZE - ., 1, 0xcc
 	.endr
-ENDPROC(early_idt_handler_array)
+	UNWIND_HINT_IRET_REGS offset=16
+END(early_idt_handler_array)
 
 early_idt_handler_common:
 	/*
@@ -346,6 +346,7 @@ early_idt_handler_common:
 	pushq %r13				/* pt_regs->r13 */
 	pushq %r14				/* pt_regs->r14 */
 	pushq %r15				/* pt_regs->r15 */
+	UNWIND_HINT_REGS
 
 	cmpq $14,%rsi		/* Page fault? */
 	jnz 10f
@@ -360,8 +361,8 @@ early_idt_handler_common:
 
 20:
 	decl early_recursion_flag(%rip)
-	jmp restore_regs_and_iret
-ENDPROC(early_idt_handler_common)
+	jmp restore_regs_and_return_to_kernel
+END(early_idt_handler_common)
 #endif /* L4 */
 
 	__INITDATA
@@ -374,6 +375,27 @@ GLOBAL(early_recursion_flag)
 	.balign	PAGE_SIZE; \
 GLOBAL(name)
 
+#ifdef CONFIG_PAGE_TABLE_ISOLATION
+/*
+ * Each PGD needs to be 8k long and 8k aligned.  We do not
+ * ever go out to userspace with these, so we do not
+ * strictly *need* the second page, but this allows us to
+ * have a single set_pgd() implementation that does not
+ * need to worry about whether it has 4k or 8k to work
+ * with.
+ *
+ * This ensures PGDs are 8k long:
+ */
+#define PTI_USER_PGD_FILL	512
+/* This ensures they are 8k-aligned: */
+#define NEXT_PGD_PAGE(name) \
+	.balign 2 * PAGE_SIZE; \
+GLOBAL(name)
+#else
+#define NEXT_PGD_PAGE(name) NEXT_PAGE(name)
+#define PTI_USER_PGD_FILL	0
+#endif
+
 /* Automate the creation of 1 to 1 mapping pmd entries */
 #define PMDS(START, PERM, COUNT)			\
 	i = 0 ;						\
@@ -383,34 +405,29 @@ GLOBAL(name)
 	.endr
 
 	__INITDATA
-NEXT_PAGE(early_top_pgt)
+NEXT_PGD_PAGE(early_top_pgt)
 	.fill	511,8,0
 #ifdef CONFIG_X86_5LEVEL
 	.quad	level4_kernel_pgt - __START_KERNEL_map + _PAGE_TABLE_NOENC
 #else
 	.quad	level3_kernel_pgt - __START_KERNEL_map + _PAGE_TABLE_NOENC
 #endif
+	.fill	PTI_USER_PGD_FILL,8,0
 
 NEXT_PAGE(early_dynamic_pgts)
 	.fill	512*EARLY_DYNAMIC_PAGE_TABLES,8,0
 
 	.data
 
-#ifndef CONFIG_XEN
-NEXT_PAGE(init_top_pgt)
-#ifdef CONFIG_L4
-	.quad 0
-#else
-	.fill	512,8,0
-#endif /* L4 */
-#else
-NEXT_PAGE(init_top_pgt)
+#if defined(CONFIG_XEN_PV) || defined(CONFIG_XEN_PVH)
+NEXT_PGD_PAGE(init_top_pgt)
 	.quad   level3_ident_pgt - __START_KERNEL_map + _KERNPG_TABLE_NOENC
 	.org    init_top_pgt + PGD_PAGE_OFFSET*8, 0
 	.quad   level3_ident_pgt - __START_KERNEL_map + _KERNPG_TABLE_NOENC
 	.org    init_top_pgt + PGD_START_KERNEL*8, 0
 	/* (2^48-(2*1024*1024*1024))/(2^39) = 511 */
 	.quad   level3_kernel_pgt - __START_KERNEL_map + _PAGE_TABLE_NOENC
+	.fill	PTI_USER_PGD_FILL,8,0
 
 NEXT_PAGE(level3_ident_pgt)
 	.quad	level2_ident_pgt - __START_KERNEL_map + _KERNPG_TABLE_NOENC
@@ -420,6 +437,10 @@ NEXT_PAGE(level2_ident_pgt)
 	 * Don't set NX because code runs from these pages.
 	 */
 	PMDS(0, __PAGE_KERNEL_IDENT_LARGE_EXEC, PTRS_PER_PMD)
+#else
+NEXT_PGD_PAGE(init_top_pgt)
+	.fill	512,8,0
+	.fill	PTI_USER_PGD_FILL,8,0
 #endif
 
 #ifdef CONFIG_X86_5LEVEL
@@ -473,7 +494,7 @@ ENTRY(phys_base)
 EXPORT_SYMBOL(phys_base)
 
 #include "../../x86/xen/xen-head.S"
-	
+
 	__PAGE_ALIGNED_BSS
 NEXT_PAGE(empty_zero_page)
 	.skip PAGE_SIZE

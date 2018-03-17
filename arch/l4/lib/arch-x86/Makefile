@@ -29,8 +29,9 @@ lib-y := delay.o misc.o cmdline.o cpu.o
 lib-y += usercopy_$(BITS).o usercopy.o
 lib-y += memcpy_$(BITS).o
 lib-$(CONFIG_RWSEM_XCHGADD_ALGORITHM) += rwsem.o
-lib-$(CONFIG_INSTRUCTION_DECODER) += insn.o inat.o
+lib-$(CONFIG_INSTRUCTION_DECODER) += insn.o inat.o insn-eval.o
 lib-$(CONFIG_RANDOMIZE_BASE) += kaslr.o
+lib-$(CONFIG_RETPOLINE) += retpoline.o
 
 obj-y += msr.o msr-reg.o msr-reg-export.o hweight.o
 
@@ -66,10 +67,11 @@ $(call L4X_FILEREF, $(b),                                     \
        iomap_copy_64 misc msr msr-reg msr-reg-export msr-smp)
 
 lib-y := $(call L4X_PREFIX_IF, $(b), $(lib-y),                  \
-                delay misc cmdline cpu memcpy_$(BITS)           \
+                delay misc cmdline cpu memcpy_$(BITS) insn-eval \
 	        usercopy rwsem insn inat atomic64_cx8_32        \
 	        strstr_32 string_32 atomic64_386_32 mmx_32      \
 	        csum-partial_64 csum-copy_64 clear_page_64      \
-		copy_page_64 memmove_64 memset_64 cmpxchg16b_emu)
+		copy_page_64 memmove_64 memset_64 cmpxchg16b_emu\
+		retpoline)
 
 CFLAGS_usercopy.o      += -Dstrncpy_from_user=strncpy_from_user_orig

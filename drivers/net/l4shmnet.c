@@ -495,7 +495,7 @@ module_exit(l4x_l4shmnet_exit);
 
 /* This function is called much earlier than module_init, esp. there's
  * no kmalloc available */
-static int l4x_l4shmnet_setup(const char *val, struct kernel_param *kp)
+static int l4x_l4shmnet_setup(const char *val, const struct kernel_param *kp)
 {
 	int l;
 	char *c;

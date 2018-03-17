@@ -7,7 +7,7 @@
 static inline
 void l4x_del_task(struct mm_struct *mm)
 {
-	l4_cap_idx_t taskcap = ACCESS_ONCE(mm->context.task);
+	l4_cap_idx_t taskcap = READ_ONCE(mm->context.task);
 #ifndef CONFIG_L4_VCPU
 	l4_msgtag_t tag;
 #endif
@@ -36,7 +36,7 @@ static inline
 void l4x_unmap_page(struct mm_struct *mm, unsigned long uaddr)
 {
 	l4_msgtag_t tag;
-	l4_cap_idx_t taskcap = ACCESS_ONCE(mm->context.task);
+	l4_cap_idx_t taskcap = READ_ONCE(mm->context.task);
 
 	if (l4_is_invalid_cap(taskcap))
 		return;

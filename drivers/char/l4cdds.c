@@ -261,7 +261,7 @@ static void __exit l4cdds_exit(void)
 module_init(l4cdds_init);
 module_exit(l4cdds_exit);
 
-static int l4cdds_setup(const char *val, struct kernel_param *kp)
+static int l4cdds_setup(const char *val, const struct kernel_param *kp)
 {
 	char *p;
 	unsigned s;

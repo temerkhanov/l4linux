@@ -58,13 +58,11 @@ static struct apic l4x_apic __ro_after_init =  {
 	.name				= "l4x-apic",
 	.apic_id_valid			= default_apic_id_valid,
 
-	.target_cpus			= online_target_cpus,
 	.cpu_present_to_apicid		= default_cpu_present_to_apicid,
 	.check_phys_apicid_present	= default_check_phys_apicid_present,
 	.phys_pkg_id			= apicid_phys_pkg_id,
-	.vector_allocation_domain	= default_vector_allocation_domain,
 
-	.cpu_mask_to_apicid		= default_cpu_mask_to_apicid,
+	.calc_dest_apicid		= apic_default_calc_apicid,
 
 	.wait_icr_idle			= noop_apic_wait_icr_idle,
 	.safe_wait_icr_idle		= noop_safe_apic_wait_icr_idle,

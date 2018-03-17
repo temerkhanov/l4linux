@@ -98,6 +98,7 @@ void __init native_init_IRQ(void)
 	x86_init.irqs.pre_vector_init();
 
 	idt_setup_apic_and_irq_gates();
+	lapic_assign_system_vectors();
 
 #ifndef CONFIG_L4
 	if (!acpi_ioapic && !of_ioapic && nr_legacy_irqs())

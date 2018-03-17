@@ -25,7 +25,6 @@ int l4x_vcpu_handle_kernel_exc(l4_vcpu_regs_t *vr);
 
 #ifdef CONFIG_L4_DEBUG_SEGFAULTS
 void l4x_print_vm_area_maps(struct task_struct *p, unsigned long highlight);
-extern u32 l4x_dbg_stop_on_segv_pf;
 #endif
 
 #ifndef CONFIG_L4_VCPU

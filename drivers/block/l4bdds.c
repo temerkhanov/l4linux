@@ -49,9 +49,7 @@ struct l4bdds_device {
 	struct gendisk *gd;
 	l4_cap_idx_t dscap, memcap;
 	void *ds_addr;
-#ifdef CONFIG_BLK_DEV_RAM_DAX
 	struct dax_device *dax_dev;
-#endif
 	struct request_queue *queue;
 	int read_write;
 	char name[40];
@@ -96,10 +94,9 @@ static void request(struct request_queue *q)
 		ds_addr += blk_rq_pos(req) << KERNEL_SECTOR_SHIFT;
 
 		rq_for_each_segment(bvec, req, iter) {
-			transfer(req->rq_disk->private_data, ds_addr,
+			transfer(dev, ds_addr,
 			         bvec.bv_len,
-			         page_address(bvec.bv_page)
-			           + bvec.bv_offset,
+			         page_address(bvec.bv_page) + bvec.bv_offset,
 			         rq_data_dir(req) == WRITE);
 			ds_addr += bvec.bv_len;
 		}
@@ -112,8 +109,8 @@ static void request(struct request_queue *q)
 static int getgeo(struct block_device *bdev, struct hd_geometry *geo)
 {
 	struct l4bdds_device *d = bdev->bd_disk->private_data;
-	geo->cylinders = d->ds_size >> 5;
-	geo->heads     = 4;
+	geo->cylinders = d->ds_size >> 11;
+	geo->heads     = 64;
 	geo->sectors   = 32;
 	return 0;
 }
@@ -126,7 +123,6 @@ static struct block_device_operations ops = {
 	.getgeo        = getgeo,
 };
 
-#ifdef CONFIG_BLK_DEV_RAM_DAX
 static long l4bdds_dax_direct_access(struct dax_device *dax_dev,
                                      pgoff_t pgoff, long nr_pages,
                                      void **kaddr, pfn_t *pfn)
@@ -146,7 +142,6 @@ static long l4bdds_dax_direct_access(struct dax_device *dax_dev,
 static const struct dax_operations l4bdds_dax_ops = {
 	.direct_access = l4bdds_dax_direct_access,
 };
-#endif
 
 static int __init l4bdds_init_one(int nr)
 {
@@ -202,13 +197,11 @@ static int __init l4bdds_init_one(int nr)
 	device[nr].gd->queue = device[nr].queue;
 	add_disk(device[nr].gd);
 
-#ifdef CONFIG_BLK_DEV_RAM_DAX
 	queue_flag_set_unlocked(QUEUE_FLAG_DAX, device[nr].queue);
 	device[nr].dax_dev = alloc_dax(&device[nr], device[nr].gd->disk_name,
 	                               &l4bdds_dax_ops);
 	if (!device[nr].dax_dev)
 		goto out3;
-#endif
 
 	pr_info("l4bdds: Disk '%s' size = %lu KB (%lu MB) flags=%lx addr=%p major=%d\n",
 	        device[nr].name, device[nr].ds_size >> 10,
@@ -217,11 +210,9 @@ static int __init l4bdds_init_one(int nr)
 
 	return 0;
 
-#ifdef CONFIG_BLK_DEV_RAM_DAX
 out3:
 	kill_dax(device[nr].dax_dev);
 	put_dax(device[nr].dax_dev);
-#endif
 out2:
 	blk_cleanup_queue(device[nr].queue);
 out1:
@@ -247,7 +238,7 @@ static int __init l4bdds_init(void)
 
 	/* Register device */
 	major_num = register_blkdev(major_num, "l4bdds");
-	if (major_num <= 0) {
+	if (major_num < 0) {
 		pr_warn("l4bdds: unable to get major number\n");
 		return -ENODEV;
 	}
@@ -260,10 +251,8 @@ static int __init l4bdds_init(void)
 
 static void __exit l4bdds_exit_one(int nr)
 {
-#ifdef CONFIG_BLK_DEV_RAM_DAX
 	kill_dax(device[nr].dax_dev);
 	put_dax(device[nr].dax_dev);
-#endif
 	del_gendisk(device[nr].gd);
 	put_disk(device[nr].gd);
 	blk_cleanup_queue(device[nr].queue);
@@ -293,7 +282,7 @@ static void __exit l4bdds_exit(void)
 module_init(l4bdds_init);
 module_exit(l4bdds_exit);
 
-static int l4bdds_setup(const char *val, struct kernel_param *kp)
+static int l4bdds_setup(const char *val, const struct kernel_param *kp)
 {
 	const char *p = NULL;
 	unsigned s, l = strlen(val);
