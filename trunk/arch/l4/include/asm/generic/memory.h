@@ -49,7 +49,7 @@ extern void *l4x_main_memory_start;
 enum { L4X_CHECK_IN_KERNEL_ACCESS = 0, };
 int l4x_check_kern_region(void *address, unsigned long size, int rw);
 
-int l4x_do_page_fault(unsigned long address, struct pt_regs *regs, unsigned long error_code);
+void l4x_do_page_fault(unsigned long address, struct pt_regs *regs, unsigned long error_code);
 #ifdef CONFIG_ARM
 void do_DataAbort(unsigned long addr, unsigned int fsr, struct pt_regs *regs);
 #endif
@@ -144,9 +144,9 @@ retry:
 		l4x_init_kernel_regs(&kregs);
 		l4x_set_regs_ip(&kregs, L4X_FAKE_EX_TABLE_ENTRY());
 
-		if (l4x_do_page_fault(address, &kregs,
-		                      PF_EKERNEL | PF_EREAD | PF_ENOTPRESENT) == -1)
-			goto return_efault;
+		l4x_do_page_fault(address, &kregs,
+		                  PF_EKERNEL | PF_EREAD | PF_ENOTPRESENT);
+
 		local_irq_disable();
 
 		ptep = lookup_pte_lock(current->mm, address,
@@ -206,15 +206,13 @@ retry:
 		l4x_init_kernel_regs(&kregs);
 		l4x_set_regs_ip(&kregs, L4X_FAKE_EX_TABLE_ENTRY());
 
-		if ((ptep == NULL) || !pte_present(*ptep)) {
-			if (l4x_do_page_fault(address, &kregs,
-			                      PF_EKERNEL | PF_EWRITE | PF_ENOTPRESENT) == -1)
-				goto return_efault;
-		} else if (!pte_write(*ptep)) {
-			if (l4x_do_page_fault(address, &kregs,
-			                      PF_EKERNEL | PF_EWRITE | PF_EPROTECTION) == -1)
-				goto return_efault;
-		}
+		if ((ptep == NULL) || !pte_present(*ptep))
+			l4x_do_page_fault(address, &kregs,
+			                  PF_EKERNEL | PF_EWRITE | PF_ENOTPRESENT);
+		else if (!pte_write(*ptep))
+			l4x_do_page_fault(address, &kregs,
+			                  PF_EKERNEL | PF_EWRITE | PF_EPROTECTION);
+
 		local_irq_disable();
 
 		ptep = lookup_pte_lock(current->mm, address,

@@ -363,7 +363,7 @@ retry:
 	 */
 #ifdef CONFIG_L4
 	if (!(fsr & PF_EUSER))
-		return -1;
+		goto no_context;
 #else
 	if (!user_mode(regs))
 		goto no_context;
@@ -376,7 +376,7 @@ retry:
 		 * got oom-killed)
 		 */
 		pagefault_out_of_memory();
-		return -1;
+		return 0;
 	}
 
 	if (fault & VM_FAULT_SIGBUS) {
@@ -397,11 +397,11 @@ retry:
 	}
 
 	__do_user_fault(tsk, addr, fsr, sig, code, regs);
-	return -1;
+	return 0;
 
 no_context:
 	__do_kernel_fault(mm, addr, fsr, regs);
-	return -1;
+	return 0;
 }
 #else					/* CONFIG_MMU */
 static int
@@ -411,12 +411,14 @@ do_page_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 }
 #endif					/* CONFIG_MMU */
 
-int l4x_do_page_fault(unsigned long address, struct pt_regs *regs,
-                      unsigned long error_code)
+#ifdef CONFIG_L4
+void l4x_do_page_fault(unsigned long address, struct pt_regs *regs,
+                       unsigned long error_code)
 {
-	return do_page_fault(address,
-	                     error_code & (FSR_FS5_0 | FSR_WRITE), regs);
+	do_page_fault(address,
+	              error_code & (FSR_FS5_0 | FSR_WRITE | PF_EUSER), regs);
 }
+#endif /* L4 */
 
 /*
  * First Level Translation Fault Handler

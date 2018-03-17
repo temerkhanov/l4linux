@@ -10,7 +10,7 @@ CFLAGS_REMOVE_mem_encrypt.o	= -pg
 endif
 
 obj-y	:=  init.o init_$(BITS).o fault.o ioremap.o extable.o pageattr.o mmap.o \
-	    pat.o pgtable.o physaddr.o setup_nx.o tlb.o
+	    pat.o pgtable.o physaddr.o setup_nx.o tlb.o cpu_entry_area.o
 
 # Make sure __phys_addr has no stackprotector
 nostackp := $(call cc-option, -fno-stack-protector)
@@ -21,15 +21,13 @@ CFLAGS_fault.o := -I$(src)/../../../x86/include/asm/trace
 
 obj-$(CONFIG_X86_PAT)		+= pat_rbtree.o
 
-obj-$(CONFIG_X86_32)		+= pgtable_32.o
+obj-$(CONFIG_X86_32)		+= pgtable_32.o iomap_32.o
 
 obj-$(CONFIG_HUGETLB_PAGE)	+= hugetlbpage.o
 obj-$(CONFIG_X86_PTDUMP_CORE)	+= dump_pagetables.o
 obj-$(CONFIG_X86_PTDUMP)	+= debug_pagetables.o
 
 obj-$(CONFIG_HIGHMEM)		+= highmem_32.o
-
-obj-$(CONFIG_KMEMCHECK)		+= kmemcheck/
 
 KASAN_SANITIZE_kasan_init_$(BITS).o := n
 obj-$(CONFIG_KASAN)		+= kasan_init_$(BITS).o
@@ -43,9 +41,10 @@ obj-$(CONFIG_AMD_NUMA)		+= amdtopology.o
 obj-$(CONFIG_ACPI_NUMA)		+= srat.o
 obj-$(CONFIG_NUMA_EMU)		+= numa_emulation.o
 
-obj-$(CONFIG_X86_INTEL_MPX)	+= mpx.o
-obj-$(CONFIG_X86_INTEL_MEMORY_PROTECTION_KEYS) += pkeys.o
-obj-$(CONFIG_RANDOMIZE_MEMORY) += kaslr.o
+obj-$(CONFIG_X86_INTEL_MPX)			+= mpx.o
+obj-$(CONFIG_X86_INTEL_MEMORY_PROTECTION_KEYS)	+= pkeys.o
+obj-$(CONFIG_RANDOMIZE_MEMORY)			+= kaslr.o
+obj-$(CONFIG_PAGE_TABLE_ISOLATION)		+= pti.o
 
 obj-$(CONFIG_AMD_MEM_ENCRYPT)	+= mem_encrypt.o
 obj-$(CONFIG_AMD_MEM_ENCRYPT)	+= mem_encrypt_boot.o
@@ -54,6 +53,7 @@ include arch/l4/Makefile.lib
 
 $(call L4X_FILEREF, ../../../x86/mm,               \
        extable mmap pat pageattr pgtable_32        \
-       setup_nx hugetlbpage debug_pagetables pkeys)
+       setup_nx hugetlbpage debug_pagetables pkeys \
+       cpu_entry_area iomap_32 pti)
 
 EXTRA_CFLAGS    += -Iarch/x86/mm

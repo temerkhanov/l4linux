@@ -818,7 +818,6 @@ int __init arm_add_memory(u64 start, u64 size)
 	if (size == 0)
 		return -EINVAL;
 
-	LOG_printf("%s %d: start=%llx size=%lld\n", __func__, __LINE__, start, size); 
 	memblock_add(start, size);
 	return 0;
 }
@@ -865,14 +864,18 @@ static void __init request_standard_resources(const struct machine_desc *mdesc)
 	struct resource *res;
 
 	kernel_code.start   = virt_to_phys(_text);
+#ifdef CONFIG_L4
+	kernel_code.end     = virt_to_phys(_etext);
+#else
 	kernel_code.end     = virt_to_phys(__init_begin - 1);
+#endif /* L4 */
 	kernel_data.start   = virt_to_phys(_sdata);
 #ifdef CONFIG_L4
 	// Our _end is aligned to 1MB and too far away...
 	kernel_data.end     = virt_to_phys(__bss_stop - 1);
 #else
 	kernel_data.end     = virt_to_phys(_end - 1);
-#endif
+#endif /* L4 */
 
 	for_each_memblock(memory, region) {
 #ifdef CONFIG_L4
@@ -1139,6 +1142,16 @@ void __init setup_arch(char **cmdline_p)
 	mdesc = setup_machine_fdt(__atags_pointer);
 	if (!mdesc)
 		mdesc = setup_machine_tags(__atags_pointer, __machine_arch_type);
+	if (!mdesc) {
+		early_print("\nError: invalid dtb and unrecognized/unsupported machine ID\n");
+		early_print("  r1=0x%08x, r2=0x%08x\n", __machine_arch_type,
+			    __atags_pointer);
+		if (__atags_pointer)
+			early_print("  r2[]=%*ph\n", 16,
+				    phys_to_virt(__atags_pointer));
+		dump_machine_table();
+	}
+
 	machine_desc = mdesc;
 	machine_name = mdesc->name;
 	dump_stack_set_arch_desc("%s", mdesc->name);

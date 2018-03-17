@@ -22,7 +22,8 @@ obj-y			+= common.o
 obj-y			+= rdrand.o
 obj-y			+= match.o
 obj-y			+= bugs.o
-obj-$(CONFIG_CPU_FREQ)	+= aperfmperf.o
+obj-y			+= aperfmperf.o
+obj-y			+= cpuid-deps.o
 
 obj-$(CONFIG_PROC_FS)	+= proc.o
 obj-$(CONFIG_X86_FEATURE_NAMES) += capflags.o powerflags.o
@@ -79,4 +80,4 @@ $(call L4X_FILEREF, $(b), \
                     perf_event_p4                             \
                     perf_event_p6 perfctr-watchdog powerflags \
                     proc rdrand scattered topology transmeta  \
-                    umc vmware);
+                    umc vmware aperfmperf cpuid-deps);

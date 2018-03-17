@@ -12,7 +12,7 @@ endif
 
 include arch/l4/Makefile.lib
 
-$(call L4X_FILEREF, ../../$(BASEARCH)/pci, \
+$(call L4X_FILEREF, ../../$(L4X_SRCARCH)/pci, \
                     common direct fixup i386 irq legacy mmconfig    \
                     mmconfig_32 mmconfig_64 acpi init early amd_bus \
                     bus_numa intel_mid_pci)

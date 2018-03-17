@@ -1167,14 +1167,10 @@ static void l4x_register_region(const l4re_ds_t ds, void *start,
 /*
  * Register program section(s) for virt_to_phys, at least initdata is used
  * as normal storage later (including DMA usage).
- *
- * Note: we just register the dataspace region where __init_begin is in for
- *       now
- * Note2:
  */
-static void l4x_register_pointer_section(void *p_in_addr, void *p_in_addr_end,
-                                         int allow_noncontig, int may_use_for_dma,
-                                         const char *tag)
+static void l4x_register_range(void *p_in_addr, void *p_in_addr_end,
+                               int allow_noncontig, int may_use_for_dma,
+                               int allow_holes, const char *tag)
 {
 	l4re_ds_t ds;
 	l4_addr_t off;
@@ -1185,17 +1181,19 @@ static void l4x_register_pointer_section(void *p_in_addr, void *p_in_addr_end,
 	addr = (l4_addr_t)p_in_addr;
 	do {
 		size = 1;
-		if (l4re_rm_find(&addr, &size, &off, &flags, &ds)) {
+		if (0 == l4re_rm_find(&addr, &size, &off, &flags, &ds))
+			l4x_register_region(ds, (void *)addr, off, size,
+			                    allow_noncontig,
+			                    may_use_for_dma, tag);
+		else if (!allow_holes) {
 			LOG_printf("Cannot find anything at %p.\n", p_in_addr);
 			l4re_rm_show_lists();
 			enter_kdebug("l4re_rm_find failed");
 			return;
-		}
+		} else
+			size = L4_PAGESIZE;
 
-		l4x_register_region(ds, (void *)addr, off, size,
-		                    allow_noncontig,
-		                    may_use_for_dma, tag);
-		addr += size ;
+		addr += size;
 	} while (addr < (l4_addr_t)p_in_addr_end);
 }
 
@@ -1533,7 +1531,9 @@ void __init l4x_setup_memory(char *cmdl,
 	if ((unsigned long)&_end < 0x100000)
 		LOG_printf("_end == %p, unreasonable small\n", &_end);
 
-	l4x_register_pointer_section((void *)((unsigned long)&_text), NULL, 0, 0, "text");
+	l4x_register_range((void *)((unsigned long)&_text),
+	                   (void *)((unsigned long)&_etext),
+	                   0, 0, 1, "text");
 
 	l4x_init_dma_phys_low_limit();
 }
@@ -2891,12 +2891,12 @@ int __ref L4_CV main(int argc, char **argv)
 	LOG_printf("main thread will be " PRINTF_L4TASK_FORM "\n",
 	           PRINTF_L4TASK_ARG(l4lx_thread_get_cap(main_id)));
 
-	l4x_register_pointer_section(&__initcall_start, 0, 0, 1,
-	                             "section-with-init(-data)");
-	l4x_register_pointer_section(&_sinittext, 0, 0, 1,
-	                             "section-with-init-text");
-	l4x_register_pointer_section(&_sdata, 0, 0, 1,
-	                             "data");
+	l4x_register_range(&__initcall_start, 0, 0, 1, 0,
+	                   "section-with-init(-data)");
+	l4x_register_range(&_sinittext, 0, 0, 1, 0,
+	                   "section-with-init-text");
+	l4x_register_range(&_sdata, 0, 0, 1, 0,
+	                   "data");
 
 #ifdef CONFIG_X86
 	/* Needed for smp alternatives -- nobody will ever use this for a

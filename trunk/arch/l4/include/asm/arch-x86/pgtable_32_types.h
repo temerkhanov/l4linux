@@ -32,34 +32,46 @@ extern bool __vmalloc_start_set; /* set once high_memory is set */
 #endif
 
 #ifdef CONFIG_L4
-#define VMALLOC_START	l4x_vmalloc_memory_start
-#define VMALLOC_END	(l4x_vmalloc_memory_start + __VMALLOC_RESERVE)
-#define MODULES_VADDR	VMALLOC_START
-#define MODULES_END	VMALLOC_END
-#define MODULES_LEN	(MODULES_VADDR - MODULES_END)
-#define MAXMEM		0xa0000000UL
-#else
+#define VMALLOC_START	(l4x_vmalloc_memory_start + 0)
+#else /* L4 */
 #define VMALLOC_START	((unsigned long)high_memory + VMALLOC_OFFSET)
+#endif /* L4 */
 #ifdef CONFIG_X86_PAE
 #define LAST_PKMAP 512
 #else
 #define LAST_PKMAP 1024
 #endif
 
-#define PKMAP_BASE ((FIXADDR_START - PAGE_SIZE * (LAST_PKMAP + 1))	\
-		    & PMD_MASK)
+/*
+ * Define this here and validate with BUILD_BUG_ON() in pgtable_32.c
+ * to avoid include recursion hell
+ */
+#define CPU_ENTRY_AREA_PAGES	(NR_CPUS * 40)
 
+#define CPU_ENTRY_AREA_BASE				\
+	((FIXADDR_START - PAGE_SIZE * (CPU_ENTRY_AREA_PAGES + 1)) & PMD_MASK)
+
+#define PKMAP_BASE		\
+	((CPU_ENTRY_AREA_BASE - PAGE_SIZE) & PMD_MASK)
+
+#ifdef CONFIG_L4
+#define VMALLOC_END	(l4x_vmalloc_memory_start + __VMALLOC_RESERVE)
+#else /* L4 */
 #ifdef CONFIG_HIGHMEM
 # define VMALLOC_END	(PKMAP_BASE - 2 * PAGE_SIZE)
 #else
-# define VMALLOC_END	(FIXADDR_START - 2 * PAGE_SIZE)
+# define VMALLOC_END	(CPU_ENTRY_AREA_BASE - 2 * PAGE_SIZE)
 #endif
+#endif /* L4 */
 
 #define MODULES_VADDR	VMALLOC_START
 #define MODULES_END	VMALLOC_END
 #define MODULES_LEN	(MODULES_VADDR - MODULES_END)
 
+#ifdef CONFIG_L4
+#define MAXMEM		0xa0000000UL
+#else /* L4 */
 #define MAXMEM	(VMALLOC_END - PAGE_OFFSET - __VMALLOC_RESERVE)
-#endif /* CONFIG_L4 */
+#endif /* L4 */
 
 #endif /* _ASM_X86_PGTABLE_32_DEFS_H */

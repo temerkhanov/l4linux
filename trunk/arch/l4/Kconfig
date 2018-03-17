@@ -167,6 +167,8 @@ config L4_SERVER_FDX
 
 config L4_BLK_DS_DRV
 	tristate "Block driver for dataspaces"
+	select DAX
+	depends on BLOCK
 	help
 	  This driver implements block devices which are backed by L4Re
 	  dataspaces.

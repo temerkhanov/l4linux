@@ -12,7 +12,7 @@ export BITS
 ifeq ($(LINSRCARCH),arm)
 # arm selection
 L4API		:= f
-BASEARCH	:= arm
+L4X_SRCARCH	:= arm
 
 CHECKFLAGS	:= -D__arm__ -m32
 
@@ -23,7 +23,7 @@ else
 
 # x86 selection
 L4API		:= f
-BASEARCH	:= x86
+L4X_SRCARCH	:= x86
 
 ifneq ($(CONFIG_X86_32),)
 L4_MK_ARCH	:= x86
@@ -50,7 +50,7 @@ else
         KBUILD_DEFCONFIG := $(ARCH)_defconfig
 endif
 
-ifeq ($(BASEARCH),x86)
+ifeq ($(L4X_SRCARCH),x86)
 # For gcc stack alignment is specified with -mpreferred-stack-boundary,
 # clang has the option -mstack-alignment for that purpose.
 ifneq ($(call cc-option, -mpreferred-stack-boundary=4),)
@@ -60,11 +60,11 @@ else ifneq ($(call cc-option, -mstack-alignment=16),)
       cc_stack_align4 := -mstack-alignment=4
       cc_stack_align8 := -mstack-alignment=8
 endif
-endif # BASEARCH==x86
+endif # L4X_SRCARCH==x86
 
 VMLINUZ_SUFFIX = $(patsubst "%",%,$(CONFIG_L4_VMLINUZ_SUFFIX))
 
-export BASEARCH L4_MK_ARCH L4_MK_API OBJCOPYARCH VMLINUZ_SUFFIX
+export L4X_SRCARCH L4_MK_ARCH L4_MK_API OBJCOPYARCH VMLINUZ_SUFFIX
 
 #HAS_BIARCH	:= $(call cc-option-yn, -m32)
 #ifeq ($(HAS_BIARCH),y)
@@ -78,11 +78,11 @@ BASEENV		:= l4env
 L4_MK_API	:= l4$(L4API)
 
 # overwrite UTS_MACHINE to get proper architecture in user land
-UTS_MACHINE	:= $(BASEARCH)
+UTS_MACHINE	:= $(L4X_SRCARCH)
 
 KBUILD_CFLAGS   += -pipe -msoft-float -DARCH_$(L4_MK_ARCH)
 
-ifeq ($(BASEARCH),x86)
+ifeq ($(L4X_SRCARCH),x86)
 
 ifdef CONFIG_X86_NEED_RELOCS
         LDFLAGS_vmlinux := --emit-relocs
@@ -198,11 +198,6 @@ ifdef CONFIG_X86_X32
 endif
 export CONFIG_X86_X32_ABI
 
-# Don't unroll struct assignments with kmemcheck enabled
-ifeq ($(CONFIG_KMEMCHECK),y)
-	KBUILD_CFLAGS += $(call cc-option,-fno-builtin-memcpy)
-endif
-
 ifneq ($(CONFIG_X86),)
 #
 # If the function graph tracer is used with mcount instead of fentry,
@@ -277,16 +272,24 @@ KBUILD_CFLAGS += -Wno-sign-compare
 #
 KBUILD_CFLAGS += -fno-asynchronous-unwind-tables
 
+# Avoid indirect branches in kernel to deal with Spectre
+ifdef CONFIG_RETPOLINE
+    RETPOLINE_CFLAGS += $(call cc-option,-mindirect-branch=thunk-extern -mindirect-branch-register)
+    ifneq ($(RETPOLINE_CFLAGS),)
+        KBUILD_CFLAGS += $(RETPOLINE_CFLAGS) -DRETPOLINE
+    endif
 endif
 
-ifeq ($(BASEARCH),arm)
+endif
+
+ifeq ($(L4X_SRCARCH),arm)
 ifeq ($(CONFIG_CPU_ENDIAN_BE8),y)
-LDFLAGS_vmlinux += --be8
-LDFLAGS_MODULE += --be8
+LDFLAGS_vmlinux		+= --be8
+KBUILD_LDFLAGS_MODULE	+= --be8
 endif
 
 ifeq ($(CONFIG_ARM_MODULE_PLTS),y)
-LDFLAGS_MODULE	+= -T $(srctree)/arch/arm/kernel/module.lds
+KBUILD_LDFLAGS_MODULE	+= -T $(srctree)/arch/arm/kernel/module.lds
 endif
 
 ifeq ($(CONFIG_CPU_BIG_ENDIAN),y)
@@ -369,7 +372,7 @@ CFLAGS_ISA	:=-mthumb $(AFLAGS_AUTOIT) $(AFLAGS_NOWARN)
 AFLAGS_ISA	:=$(CFLAGS_ISA) -Wa$(comma)-mthumb
 # Work around buggy relocation from gas if requested:
 ifeq ($(CONFIG_THUMB2_AVOID_R_ARM_THM_JUMP11),y)
-CFLAGS_MODULE	+=-fno-optimize-sibling-calls
+KBUILD_CFLAGS_MODULE	+=-fno-optimize-sibling-calls
 endif
 else
 CFLAGS_ISA	:=$(call cc-option,-marm,)
@@ -416,7 +419,7 @@ L4INC		= -I$(L4OBJ)/include/$(L4_MK_ARCH)/$(L4_MK_API) \
 
 head-y := arch/l4/kernel/head.o
 
-libs-y				+= arch/l4/lib/arch-$(BASEARCH)/	\
+libs-y				+= arch/l4/lib/arch-$(L4X_SRCARCH)/	\
 				   arch/l4/l4lxlib/generic/		\
 				   arch/l4/l4lxlib/$(BASEENV)/
 libs-$(CONFIG_L4_SERVER)	+= arch/l4/server/
@@ -424,13 +427,13 @@ libs-$(CONFIG_L4_SERVER)	+= arch/l4/server/
 drivers-y			+= arch/l4/drivers/
 drivers-$(CONFIG_PCI)		+= arch/l4/pci/
 
-ifeq ($(BASEARCH),x86)
+ifeq ($(L4X_SRCARCH),x86)
 drivers-$(CONFIG_PM)		+= arch/l4/power/arch-x86/
 drivers-$(CONFIG_FB)		+= arch/x86/video/
 core-$(CONFIG_KVM)		+= arch/l4/kvm/arch-x86/
 endif
 
-ifeq ($(BASEARCH),arm)
+ifeq ($(L4X_SRCARCH),arm)
 core-$(CONFIG_VDSO)		+= arch/arm/vdso/
 core-y				+= arch/l4/common/arch-arm/
 core-y				+= arch/l4/arm-mach-l4/
@@ -522,12 +525,12 @@ mtags:
 arch/l4/include/asm/l4-arch/asm:
 	@echo '  LN      asm-l4/l4-arch/asm symlink'
 	$(Q)mkdir -p $(@D)
-	$(Q)ln -s $(if $(KBUILD_SRC),../../../../../source/arch/l4/include/asm,..)/arch-$(BASEARCH) $@
+	$(Q)ln -s $(if $(KBUILD_SRC),../../../../../source/arch/l4/include/asm,..)/arch-$(L4X_SRCARCH) $@
 
 arch/l4/include/asm/arch:
-	@echo '  LN      asm-l4/arch-$(BASEARCH)/arch -> asm/arch symlink'
+	@echo '  LN      asm-l4/arch-$(L4X_SRCARCH)/arch -> asm/arch symlink'
 	$(Q)mkdir -p $(@D)
-	$(Q)ln -s $(if $(KBUILD_SRC),../../../../source/arch/l4/include/asm/)arch-$(BASEARCH)/arch $@
+	$(Q)ln -s $(if $(KBUILD_SRC),../../../../source/arch/l4/include/asm/)arch-$(L4X_SRCARCH)/arch $@
 
 arch/l4/include/asm/api:
 	@echo '  LN      asm-l4/api-$(BASEENV) -> asm/api symlink'
@@ -535,9 +538,9 @@ arch/l4/include/asm/api:
 	$(Q)ln -s $(if $(KBUILD_SRC),../../../../source/arch/l4/include/asm/)api-$(BASEENV) $@
 
 arch/l4/include/asm/l4x:
-	@echo '  LN      asm-l4/l4x-$(BASEARCH) -> asm/l4x symlink'
+	@echo '  LN      asm-l4/l4x-$(L4X_SRCARCH) -> asm/l4x symlink'
 	$(Q)mkdir -p $(@D)
-	$(Q)ln -s $(if $(KBUILD_SRC),../../../../source/arch/l4/include/asm/)l4x-$(BASEARCH) $@
+	$(Q)ln -s $(if $(KBUILD_SRC),../../../../source/arch/l4/include/asm/)l4x-$(L4X_SRCARCH) $@
 
 arch/l4/include/asm/l4lxapi/impl:
 	@echo '  LN      asm-l4/l4lxapi/impl symlink'
@@ -568,7 +571,7 @@ $(objtree)/Makeconf.l4conf: $(srctree)/arch/l4/Makefile.l4conf $(srctree)/arch/l
 
 archprepare: print_instructions check_linux_config $(symlink_files) $(symlink_dirs) \
              $(objtree)/Makeconf.l4conf
-ifeq ($(BASEARCH),arm)
+ifeq ($(L4X_SRCARCH),arm)
 	$(Q)$(MAKE) $(build)=arch/arm/tools kapi
 	$(Q)cp $(srctree)/arch/arm/tools/mach-types .tmp.mach-types.list
 	$(Q)echo "l4	MACH_L4	L4	9999" >> .tmp.mach-types.list
@@ -576,7 +579,7 @@ ifeq ($(BASEARCH),arm)
 	$(Q)cmp -s .tmp.mach-types.h arch/l4/include/generated/asm/mach-types.h || mv .tmp.mach-types.h arch/l4/include/generated/asm/mach-types.h
 	$(Q)rm -f .tmp.mach-types.list .tmp.mach-types.h
 endif
-	$(Q)mkdir -p arch/$(BASEARCH)/lib
+	$(Q)mkdir -p arch/$(L4X_SRCARCH)/lib
 ifeq ($(CONFIG_KEXEC_FILE),y)
 	$(Q)$(MAKE) $(build)=arch/x86/purgatory arch/x86/purgatory/kexec-purgatory.c
 endif
@@ -595,14 +598,14 @@ archclean:
 	$(Q)$(MAKE) $(clean)=arch/x86/tools
 	$(Q)$(MAKE) $(clean)=arch/x86/purgatory
 
-ifeq ($(BASEARCH),x86)
+ifeq ($(L4X_SRCARCH),x86)
 # Syscall table generation
 
 archheaders:
 	$(Q)$(MAKE) $(build)=arch/x86/entry/syscalls all
 endif
 
-ifeq ($(BASEARCH),arm)
+ifeq ($(L4X_SRCARCH),arm)
 archheaders:
 	$(Q)$(MAKE) $(build)=arch/arm/tools uapi
 endif
@@ -624,12 +627,12 @@ DIS_OPTS-x86-32 := HPET_TIMER X86_X32
 DIS_OPTS-arm-32 := PERF_EVENTS ARM_PATCH_PHYS_VIRT HIGHMEM
 DIS_OPTS := HIGHMEM4G HIGHMEM64G PCI_GOANY PCI_GOBIOS \
             X86_MCE X86_MCE MTRR PARAVIRT KEXEC MCA SOFTWARE_SUSPEND APM \
-	    CPU_FREQ VM86 X86_DS X86_PTRACE_BTS HT_IRQ DMI \
+	    VM86 X86_DS X86_PTRACE_BTS HT_IRQ DMI \
 	    TRANSPARENT_HUGEPAGE COMPACTION X86_PAE ACPI X86_SMAP \
 	    M486 M586 M586TSC M586MMX PNP \
-	    X86_16BIT MICROCODE SCHED_MC_PRIO DOUBLEFAULT \
-	    $(DIS_OPTS-$(BASEARCH)-$(BITS))
-ENA_OPTS := $(ENA_OPTS-$(BASEARCH))
+	    X86_16BIT MICROCODE \
+	    $(DIS_OPTS-$(L4X_SRCARCH)-$(BITS))
+ENA_OPTS := $(ENA_OPTS-$(L4X_SRCARCH))
 
 print_instructions:
 	@if [ ! -e vmlinuz$(VMLINUZ_SUFFIX) ]; then \

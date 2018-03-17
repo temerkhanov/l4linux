@@ -131,7 +131,7 @@ void l4x_evict_tasks(struct task_struct *exclude)
 			continue;
 		}
 
-		t = ACCESS_ONCE(mm->context.task);
+		t = READ_ONCE(mm->context.task);
 
 		if (l4_is_invalid_cap(t)) {
 			task_unlock(p);

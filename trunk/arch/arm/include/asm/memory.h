@@ -83,7 +83,11 @@
 #define IOREMAP_MAX_ORDER	24
 #endif
 
+#ifdef CONFIG_L4
+#define VECTORS_BASE		UL(0xbffff000)
+#else
 #define VECTORS_BASE		UL(0xffff0000)
+#endif
 
 #else /* CONFIG_MMU */
 

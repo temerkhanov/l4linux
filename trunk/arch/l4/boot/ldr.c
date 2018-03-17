@@ -283,7 +283,7 @@ int main(int argc, char **argv)
 		     : "memory", "esi");
 #else
 	asm volatile("movq  %[exchg], %%rcx\n"
-	             "call  *%[entry]\n"
+	             "jmp  *%[entry]\n"
 		     : "=a" (i)
 		     : [argv] "S" (argv),
 		       [argc] "D" ((unsigned long)argc),

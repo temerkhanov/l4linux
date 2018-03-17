@@ -7,6 +7,7 @@
 #include <l4/re/util/event_buffer>
 #include <l4/re/util/event_svr>
 #include <l4/re/util/meta>
+#include <l4/re/util/unique_cap>
 
 #include <asm/server/server.h>
 #include <asm/server/fdx-srv.h>
@@ -206,8 +207,7 @@ int
 Fdx_server::alloc_shm(L4::Cap<L4Re::Dataspace> *ds,
                       void **addr, unsigned size)
 {
-	L4Re::Util::Auto_cap<L4Re::Dataspace>::Cap d
-		= L4Re::Util::cap_alloc.alloc<L4Re::Dataspace>();
+	auto d = L4Re::Util::make_unique_cap<L4Re::Dataspace>();
 	if (!d.is_valid())
 		return -L4_ENOMEM;
 

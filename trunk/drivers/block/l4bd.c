@@ -670,7 +670,7 @@ static void __exit l4bd_exit(void)
 module_init(l4bd_init);
 module_exit(l4bd_exit);
 
-static int l4bd_setup(const char *val, struct kernel_param *kp)
+static int l4bd_setup(const char *val, const struct kernel_param *kp)
 {
 	const char *p = NULL;
 	unsigned l = strlen(val);

@@ -38,7 +38,7 @@ EXPORT_SYMBOL(arm_heavy_mb);
 
 #ifdef CONFIG_CPU_CACHE_VIPT
 
-#ifdef NOT_FOR_L4
+#ifndef CONFIG_L4
 static void flush_pfn_alias(unsigned long pfn, unsigned long vaddr)
 {
 	unsigned long to = FLUSH_ALIAS_START + (CACHE_COLOUR(vaddr) << PAGE_SHIFT);
@@ -52,9 +52,9 @@ static void flush_pfn_alias(unsigned long pfn, unsigned long vaddr)
 	    : "r" (to), "r" (to + PAGE_SIZE - 1), "r" (zero)
 	    : "cc");
 }
-#endif
+#endif /* L4 */
 
-#ifdef NOT_FOR_L4
+#ifndef CONFIG_L4
 static void flush_icache_alias(unsigned long pfn, unsigned long vaddr, unsigned long len)
 {
 	unsigned long va = FLUSH_ALIAS_START + (CACHE_COLOUR(vaddr) << PAGE_SHIFT);
@@ -65,11 +65,11 @@ static void flush_icache_alias(unsigned long pfn, unsigned long vaddr, unsigned 
 	to = va + offset;
 	flush_icache_range(to, to + len);
 }
-#endif
+#endif /* L4 */
 
 void flush_cache_mm(struct mm_struct *mm)
 {
-#ifdef NOT_FOR_L4
+#ifndef CONFIG_L4
 	if (cache_is_vivt()) {
 		vivt_flush_cache_mm(mm);
 		return;
@@ -82,12 +82,12 @@ void flush_cache_mm(struct mm_struct *mm)
 		    : "r" (0)
 		    : "cc");
 	}
-#endif
+#endif /* L4 */
 }
 
 void flush_cache_range(struct vm_area_struct *vma, unsigned long start, unsigned long end)
 {
-#if 0
+#ifndef CONFIG_L4
 	if (cache_is_vivt()) {
 		vivt_flush_cache_range(vma, start, end);
 		return;
@@ -103,12 +103,12 @@ void flush_cache_range(struct vm_area_struct *vma, unsigned long start, unsigned
 
 	if (vma->vm_flags & VM_EXEC)
 		__flush_icache_all();
-#endif
+#endif /* L4 */
 }
 
 void flush_cache_page(struct vm_area_struct *vma, unsigned long user_addr, unsigned long pfn)
 {
-#if 0
+#ifndef CONFIG_L4
 	if (cache_is_vivt()) {
 		vivt_flush_cache_page(vma, user_addr, pfn);
 		return;
@@ -121,7 +121,7 @@ void flush_cache_page(struct vm_area_struct *vma, unsigned long user_addr, unsig
 
 	if (vma->vm_flags & VM_EXEC && icache_is_vivt_asid_tagged())
 		__flush_icache_all();
-#endif
+#endif /* L4 */
 }
 
 #else
@@ -211,7 +211,7 @@ void copy_to_user_page(struct vm_area_struct *vma, struct page *page,
 	memcpy(dst, src, len);
 #ifndef CONFIG_L4
 	flush_ptrace_access(vma, page, uaddr, dst, len);
-#endif
+#endif /* L4 */
 #ifdef CONFIG_SMP
 	preempt_enable();
 #endif
@@ -255,7 +255,7 @@ void __flush_dcache_page(struct address_space *mapping, struct page *page)
 	if (mapping && cache_is_vipt_aliasing())
 		flush_pfn_alias(page_to_pfn(page),
 				page->index << PAGE_SHIFT);
-#endif
+#endif /* L4 */
 }
 
 #ifndef CONFIG_L4
@@ -289,7 +289,7 @@ static void __flush_dcache_aliases(struct address_space *mapping, struct page *p
 	}
 	flush_dcache_mmap_unlock(mapping);
 }
-#endif
+#endif /* L4 */
 
 #if __LINUX_ARM_ARCH__ >= 6
 void __sync_icache_dcache(pte_t pteval)
@@ -317,7 +317,7 @@ void __sync_icache_dcache(pte_t pteval)
 
 	if (pte_exec(pteval))
 		__flush_icache_all();
-#endif
+#endif /* L4 */
 }
 #endif
 
@@ -371,7 +371,7 @@ void flush_dcache_page(struct page *page)
 			__flush_icache_all();
 		set_bit(PG_dcache_clean, &page->flags);
 	}
-#endif
+#endif /* L4 */
 }
 EXPORT_SYMBOL(flush_dcache_page);
 

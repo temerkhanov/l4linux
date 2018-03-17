@@ -817,9 +817,9 @@ static void l4fb_update_dirty_init(struct l4fb_screen *screen,
 }
 
 
-static void l4fb_refresh_func(unsigned long data)
+static void l4fb_refresh_func(struct timer_list *t)
 {
-	struct l4fb_screen *screen = (struct l4fb_screen *)data;
+	struct l4fb_screen *screen = from_timer(screen, t, refresh_timer);
 	if (screen->refresh_enabled && l4fb_update_rect) {
 		if (1)
 			l4fb_update_rect(screen, 0, 0, screen->ginfo.width,
@@ -1012,8 +1012,7 @@ static int l4fb_init_session(struct fb_info *fb, struct l4fb_screen *screen)
 
 	l4fb_update_dirty_init(screen, fix->smem_start, fix->smem_len);
 
-	setup_timer(&screen->refresh_timer, l4fb_refresh_func,
-	            (unsigned long)screen);
+	timer_setup(&screen->refresh_timer, l4fb_refresh_func, 0);
 	if (screen->refresh_sleep) {
 		screen->refresh_timer.expires = jiffies
 		                                + screen->refresh_sleep;

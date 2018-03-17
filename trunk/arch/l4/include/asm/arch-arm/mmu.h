@@ -19,6 +19,10 @@ typedef struct {
 #ifdef CONFIG_VDSO
 	unsigned long	vdso;
 #endif
+#ifdef CONFIG_BINFMT_ELF_FDPIC
+	unsigned long	exec_fdpic_loadmap;
+	unsigned long	interp_fdpic_loadmap;
+#endif
 
 #ifdef CONFIG_L4
 	l4_cap_idx_t task;
@@ -43,6 +47,10 @@ typedef struct {
  */
 typedef struct {
 	unsigned long	end_brk;
+#ifdef CONFIG_BINFMT_ELF_FDPIC
+	unsigned long	exec_fdpic_loadmap;
+	unsigned long	interp_fdpic_loadmap;
+#endif
 } mm_context_t;
 
 #endif

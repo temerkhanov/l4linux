@@ -122,27 +122,6 @@ not_present:
 	return phy;
 }
 
-static inline void verbose_segfault(struct task_struct *p,
-                                    struct pt_regs *regs,
-                                    l4_umword_t pfa, l4_umword_t ip,
-                                    l4_umword_t error_code)
-{
-#ifdef CONFIG_L4_DEBUG_SEGFAULTS
-	if (l4x_dbg_stop_on_segv_pf) {
-		l4x_printf("cpu%d: segfault for %s(%d) [T:%lx] "
-		           "at %08lx, ip=%08lx, error_code = %lx\n",
-		           raw_smp_processor_id(), p->comm, p->pid,
-		           l4_debugger_global_id(p->mm->context.task),
-		           pfa, ip, error_code);
-		l4x_print_vm_area_maps(p, ip);
-		l4x_print_regs(thread_val_err(&p->thread),
-		               thread_val_trapno(&p->thread), regs);
-		enter_kdebug("segfault");
-		l4x_dbg_stop_on_segv_pf--;
-	}
-#endif
-}
-
 static inline int l4x_handle_page_fault(struct task_struct *p,
                                         struct pt_regs *regs,
                                         l4_umword_t pfa, l4_umword_t err,
@@ -164,17 +143,11 @@ static inline int l4x_handle_page_fault(struct task_struct *p,
 	// optimize here: if we found the page, reply immediately
 	// without looking for work, it's just a tlb miss
 	if (lxaddr == (l4_umword_t)(-EFAULT)) {
-		int ret;
 		unsigned long flags;
 
 		local_save_flags(flags);
-		ret = l4x_do_page_fault(pfa, regs, err);
+		l4x_do_page_fault(pfa, regs, err | PF_EUSER);
 		local_irq_restore(flags);
-		if (ret) {
-			verbose_segfault(p, regs, pfa, ip, err);
-			return 1;
-		}
-
 	} else {
 		l4x_debug_stats_pagefault_but_in_PTs_hit();
 		if (l4x_iswrpf(err))
@@ -644,14 +617,8 @@ static inline int l4x_dispatch_page_fault(struct task_struct *p,
 	if (unlikely(l4x_handle_page_fault_with_exception(t, regsp)))
 		return 0;
 
-	if (l4x_handle_page_fault(p, regsp, l4x_l4pfa(t), t->error_code,
-	                          regs_pc(p))) {
-		local_irq_enable();
-		if (!signal_pending(p))
-			force_sig(SIGSEGV, p);
-		l4x_do_signal(regsp, 0);
-		return 0;
-	}
+	l4x_handle_page_fault(p, regsp, l4x_l4pfa(t), t->error_code,
+	                      regs_pc(p));
 
 #ifndef CONFIG_L4_VCPU
 	if (need_resched())
@@ -1099,6 +1066,7 @@ create_task:
 		vcpu->state = 0;
 
 		if (l4_ipc_error(tag, utcb) == L4_IPC_SEMAPFAILED) {
+			l4_task_unmap(L4RE_THIS_TASK_CAP, (l4_fpage_t)fp2, L4_FP_OTHER_SPACES);
 			l4x_evict_tasks(p);
 		} else if (l4_error(tag) == -L4_ENOENT) {
 			/* In case of new task with same cap-idx we need to

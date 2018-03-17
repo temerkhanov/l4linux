@@ -7,6 +7,7 @@
 #include <asm/mmu.h>
 #include <asm/fixmap.h>
 #include <asm/irq_vectors.h>
+#include <asm/cpu_entry_area.h>
 
 #include <linux/smp.h>
 #include <linux/percpu.h>
@@ -27,6 +28,8 @@ static inline void fill_ldt(struct desc_struct *desc, const struct user_desc *in
 
 	desc->type		= (info->read_exec_only ^ 1) << 1;
 	desc->type	       |= info->contents << 2;
+	/* Set the ACCESS bit so it can be mapped RO */
+	desc->type	       |= 1;
 
 	desc->s			= 1;
 	desc->dpl		= 0x3;
@@ -67,17 +70,10 @@ static inline struct desc_struct *get_current_gdt_rw(void)
 	return this_cpu_ptr(&gdt_page)->gdt;
 }
 
-/* Get the fixmap index for a specific processor */
-static inline unsigned int get_cpu_gdt_ro_index(int cpu)
-{
-	return FIX_GDT_REMAP_BEGIN + cpu;
-}
-
 /* Provide the fixmap address of the remapped GDT */
 static inline struct desc_struct *get_cpu_gdt_ro(int cpu)
 {
-	unsigned int idx = get_cpu_gdt_ro_index(cpu);
-	return (struct desc_struct *)__fix_to_virt(idx);
+	return (struct desc_struct *)&get_cpu_entry_area(cpu)->gdt;
 }
 
 /* Provide the current read-only GDT */
@@ -189,7 +185,7 @@ static inline void set_tssldt_descriptor(void *d, unsigned long addr,
 	desc->type		= type | 0x60; // DESCTYPE_DPL3
 #else
 	desc->type		= type;
-#endif
+#endif /* L4 */
 	desc->p			= 1;
 	desc->limit1		= (size >> 16) & 0xF;
 	desc->base2		= (addr >> 24) & 0xFF;
@@ -198,7 +194,7 @@ static inline void set_tssldt_descriptor(void *d, unsigned long addr,
 #endif
 }
 
-static inline void __set_tss_desc(unsigned cpu, unsigned int entry, void *addr)
+static inline void __set_tss_desc(unsigned cpu, unsigned int entry, struct x86_hw_tss *addr)
 {
 	struct desc_struct *d = get_cpu_gdt_rw(cpu);
 	tss_desc tss;
@@ -213,7 +209,11 @@ static inline void __set_tss_desc(unsigned cpu, unsigned int entry, void *addr)
 static inline void native_set_ldt(const void *addr, unsigned int entries)
 {
 	if (likely(entries == 0))
-		{}//l4/asm volatile("lldt %w0"::"q" (0));
+#ifdef CONFIG_L4
+		{ }
+#else
+		asm volatile("lldt %w0"::"q" (0));
+#endif /* L4 */
 	else {
 		unsigned cpu = smp_processor_id();
 		ldt_desc ldt;
@@ -224,7 +224,7 @@ static inline void native_set_ldt(const void *addr, unsigned int entries)
 				&ldt, DESC_LDT);
 #ifndef CONFIG_L4
 		asm volatile("lldt %w0"::"q" (GDT_ENTRY_LDT*8));
-#endif
+#endif /* L4 */
 	}
 }
 
@@ -300,6 +300,7 @@ static inline void native_load_tls(struct thread_struct *t, unsigned int cpu)
 	for (i = 0; i < GDT_ENTRY_TLS_ENTRIES; i++)
 		gdt[GDT_ENTRY_TLS_MIN + i] = t->tls_array[i];
 
+#ifdef CONFIG_L4
 #ifdef CONFIG_X86
 #ifdef CONFIG_L4_VCPU
 	L4XV_FN_v(fiasco_gdt_set(L4_INVALID_CAP, t->tls_array,
@@ -309,6 +310,7 @@ static inline void native_load_tls(struct thread_struct *t, unsigned int cpu)
 	               3 * LDT_ENTRY_SIZE, 0, l4_utcb());
 #endif
 #endif
+#endif /* L4 */
 }
 
 DECLARE_PER_CPU(bool, __tss_limit_invalid);
@@ -418,7 +420,7 @@ static inline void set_desc_limit(struct desc_struct *desc, unsigned long limit)
 void update_intr_gate(unsigned int n, const void *addr);
 void alloc_intr_gate(unsigned int n, const void *addr);
 
-extern unsigned long used_vectors[];
+extern unsigned long system_vectors[];
 
 #ifdef CONFIG_X86_64
 DECLARE_PER_CPU(u32, debug_idt_ctr);

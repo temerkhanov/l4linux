@@ -380,8 +380,13 @@ unsigned long arch_randomize_brk(struct mm_struct *mm)
  * through ptrace and /proc/<pid>/mem.
  */
 static struct vm_area_struct gate_vma = {
-	.vm_start	= CONFIG_VECTORS_BASE,
-	.vm_end		= CONFIG_VECTORS_BASE + PAGE_SIZE,
+#ifdef CONFIG_L4
+	.vm_start	= VECTORS_BASE,
+	.vm_end		= VECTORS_BASE + PAGE_SIZE,
+#else /* L4 */
+	.vm_start	= 0xffff0000,
+	.vm_end		= 0xffff0000 + PAGE_SIZE,
+#endif /* L4 */
 	.vm_flags	= VM_READ | VM_EXEC | VM_MAYREAD | VM_MAYEXEC,
 };
 
