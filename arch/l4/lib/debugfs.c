@@ -36,7 +36,7 @@ static int stats_init(void)
 	const mode_t mode = S_IRUGO | S_IWUSR | S_IWGRP;
 
 	statdir = debugfs_create_dir("stats", l4x_debugfs_dir);
-	if ((err = IS_ERR(statdir))) {
+	if ((err = PTR_ERR_OR_ZERO(statdir))) {
 		printk(KERN_ERR "Failed to create \"l4lx/stats\" debugfs dir:"
 		                " %d\n", err);
 		return err;
@@ -81,7 +81,7 @@ static int __init l4x_debugfs_init(void)
 	int err;
 
 	l4x_debugfs_dir = debugfs_create_dir("l4x", NULL);
-	if ((err = IS_ERR(l4x_debugfs_dir))) {
+	if ((err = PTR_ERR_OR_ZERO(l4x_debugfs_dir))) {
 		printk(KERN_ERR "Failed to create \"l4x\" debugfs directory:"
 		                " %d\n", err);
 		return err;

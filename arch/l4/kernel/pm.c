@@ -14,11 +14,15 @@
 #include <asm/generic/vmalloc.h>
 #include <asm/generic/log.h>
 #include <asm/generic/memory.h>
+#include <asm/generic/vcpu.h>
+#include <asm/generic/util.h>
 
 #include <asm/l4lxapi/task.h>
 #include <asm/l4lxapi/memory.h>
 
 #include <l4/sys/irq.h>
+#include <l4/sys/platform_control.h>
+#include <l4/log/log.h>
 
 static LIST_HEAD(wakeup_srcs);
 
@@ -203,6 +207,18 @@ static void loop_over_irqs(int doattach)
 	}
 }
 
+static void l4x_pfc_suspend(void)
+{
+	l4_cap_idx_t pfc_cap;
+	long err;
+
+	l4x_re_resolve_name("pfc", &pfc_cap);
+	if (l4_is_valid_cap(pfc_cap)
+	    && (err = L4XV_FN_e(l4_platform_ctl_system_suspend(pfc_cap, 0))))
+		L4XV_FN_v(LOG_printf("L4x: l4_platform_ctl_system_suspend "
+		                     "failed: %ld\n", err));
+}
+
 static int l4x_pm_plat_enter(suspend_state_t state)
 {
 	if (state != PM_SUSPEND_MEM)
@@ -211,6 +227,8 @@ static int l4x_pm_plat_enter(suspend_state_t state)
 	loop_over_irqs(1);
 
 	flush_cache_all();
+
+	l4x_pfc_suspend();
 
 	l4x_global_wait_save();
 

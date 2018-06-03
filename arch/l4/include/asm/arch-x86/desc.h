@@ -153,8 +153,10 @@ static inline void native_write_idt_entry(gate_desc *idt, int entry, const gate_
 static inline void native_write_ldt_entry(struct desc_struct *ldt, int entry, const void *desc)
 {
 	memcpy(&ldt[entry], desc, 8);
+#ifdef CONFIG_L4
 	L4XV_FN_v(fiasco_ldt_set(current->mm->context.task, ldt + entry,
 	                         1, entry, l4_utcb()));
+#endif
 }
 
 static inline void

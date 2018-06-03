@@ -389,7 +389,7 @@ void l4x_global_wait_save(void)
 
 	memcpy(&pm_event.vcpu, vcpu, sizeof(*vcpu));
 	memcpy(&pm_event.utcb_msg_regs, l4_utcb_mr_u(utcb),
-	       L4_UTCB_GENERIC_DATA_SIZE);
+	       sizeof(pm_event.utcb_msg_regs));
 	pm_event.valid = 1;
 }
 
@@ -412,7 +412,7 @@ void l4x_global_saved_event_inject(void)
 	/* Might be called from different CPU than saved, so leave TCR
 	 * intact */
 	memcpy(l4_utcb_mr_u(utcb), &pm_event.utcb_msg_regs,
-	       L4_UTCB_GENERIC_DATA_SIZE);
+	       sizeof(l4_utcb_mr_u(utcb)->mr));
 	pm_event.valid = 0;
 
 	do_vcpu_irq(vcpu);

@@ -141,6 +141,9 @@ static const __initconst struct idt_data apic_idts[] = {
 # ifdef CONFIG_IRQ_WORK
 	INTG(IRQ_WORK_VECTOR,		irq_work_interrupt),
 # endif
+#ifdef CONFIG_X86_UV
+	INTG(UV_BAU_MESSAGE,		uv_bau_message_intr1),
+#endif
 	INTG(SPURIOUS_APIC_VECTOR,	spurious_interrupt),
 	INTG(ERROR_APIC_VECTOR,		error_interrupt),
 #endif
@@ -160,12 +163,9 @@ static const __initconst struct idt_data early_pf_idts[] = {
  * Override for the debug_idt. Same as the default, but with interrupt
  * stack set to DEFAULT_STACK (0). Required for NMI trap handling.
  */
-#ifdef CONFIG_L4
 static const __initconst struct idt_data dbg_idts[] = {
 	INTG(X86_TRAP_DB,	debug),
-	INTG(X86_TRAP_BP,	int3),
 };
-#endif /* L4 */
 #endif
 
 /* Must be page-aligned because the real IDT is used in a fixmap. */
@@ -184,17 +184,14 @@ gate_desc debug_idt_table[IDT_ENTRIES] __page_aligned_bss;
  * The exceptions which use Interrupt stacks. They are setup after
  * cpu_init() when the TSS has been initialized.
  */
-#ifdef CONFIG_L4
 static const __initconst struct idt_data ist_idts[] = {
 	ISTG(X86_TRAP_DB,	debug,		DEBUG_STACK),
 	ISTG(X86_TRAP_NMI,	nmi,		NMI_STACK),
-	SISTG(X86_TRAP_BP,	int3,		DEBUG_STACK),
 	ISTG(X86_TRAP_DF,	double_fault,	DOUBLEFAULT_STACK),
 #ifdef CONFIG_X86_MCE
 	ISTG(X86_TRAP_MC,	&machine_check,	MCE_STACK),
 #endif
 };
-#endif /* L4 */
 
 /*
  * Override for the debug_idt. Same as the default, but with interrupt

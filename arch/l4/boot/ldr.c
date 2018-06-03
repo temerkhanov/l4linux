@@ -1,3 +1,4 @@
+#undef __always_inline
 
 #include <stdio.h>
 #include <string.h>
@@ -16,9 +17,8 @@
 
 #include <l4/sys/compiler.h>
 #include <l4/sys/kdebug.h>
-#ifdef CONFIG_L4_VCPU
-#include <l4/sys/vcpu.h>
-#endif
+
+#include "launch.h"
 
 L4RE_ELF_AUX_ELEM_T(l4re_elf_aux_mword_t, _stack_size,
                     L4RE_ELF_AUX_T_STACK_SIZE, 0x1000);
@@ -119,7 +119,6 @@ int main(int argc, char **argv)
 {
 	ElfW(Ehdr) *ehdr = (void *)image_vmlinux_start;
 	int i;
-	int (*entry)(int, char **);
 
 	if (!l4util_elf_check_magic(ehdr)) {
 		printf("lxldr: Invalid vmlinux binary (No ELF)\n");
@@ -244,53 +243,12 @@ int main(int argc, char **argv)
 		}
 	}
 
-	entry = (void *)ehdr->e_entry;
 	printf("Starting binary at %p, argc=%d argv=%p *argv=%p argv0=%s\n",
-	       entry, argc, argv, *argv, *argv);
-	//printf("%x %x %x %x %x\n", *((char *)entry + 0), *((char *)entry + 1), *((char *)entry + 2), *((char *)entry + 3), *((char *)entry + 4));
+	       (void *)ehdr->e_entry, argc, argv, *argv, *argv);
 	exchg.external_resolver = __l4_external_resolver;
 	exchg.l4re_global_env  = l4re_global_env;
 	exchg.kip              = l4re_kip();
 	printf("External resolver is at %p\n", __l4_external_resolver);
-#ifdef ARCH_arm
-	{
-		register unsigned long _argc  asm("r0") = argc;
-		register unsigned long _argv  asm("r1") = (unsigned long)argv;
-		register unsigned long _exchg asm("r2") = (unsigned long)&exchg;
-		register unsigned long _entry asm("r3") = (unsigned long)entry;
-		asm volatile("mov lr, pc   \n"
-		             "mov pc, r3   \n"
-			     "mov %0, r0   \n"
-			     : "=r" (i)
-			     : "r" (_argv),
-			       "r" (_argc),
-			       "r" (_exchg),
-			       "r" (_entry)
-			     : "memory");
-	}
-#elif defined(ARCH_x86)
-	asm volatile("push %[argv]\n"
-	             "push %[argc]\n"
-	             "mov  %[exchg], %%esi\n"
-	             "call  *%[entry]\n"
-	             "pop %[argc]\n"
-	             "pop %[argv]\n"
-		     : "=a" (i)
-		     : [argv] "r" (argv),
-		       [argc] "r" (argc),
-		       [exchg] "r" (&exchg),
-		       [entry] "r" (entry)
-		     : "memory", "esi");
-#else
-	asm volatile("movq  %[exchg], %%rcx\n"
-	             "jmp  *%[entry]\n"
-		     : "=a" (i)
-		     : [argv] "S" (argv),
-		       [argc] "D" ((unsigned long)argc),
-		       [exchg] "r" (&exchg),
-		       [entry] "r" (entry)
-		     : "memory", "rcx");
-#endif
 
-	return i;
+	return launch_kernel(argc, argv, &exchg, ehdr->e_entry);
 }
