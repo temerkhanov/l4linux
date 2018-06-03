@@ -17,10 +17,12 @@ ifeq ($(LINSRCARCH),)
       L4X_CONFIG=$(srctree)/arch/l4/configs/$(L4X_DEFCONFIG)
     endif
   endif
-  ifneq ($(shell . $(L4X_CONFIG); echo $$CONFIG_L4_ARCH_ARM),)
-    LINSRCARCH := arm
-  else
-    LINSRCARCH := x86
+  ifneq ($(wildcard $(L4X_CONFIG)),)
+    ifneq ($(shell . $(L4X_CONFIG); echo $$CONFIG_L4_ARCH_ARM),)
+      LINSRCARCH := arm
+    else
+      LINSRCARCH := x86
+    endif
   endif
 endif
 

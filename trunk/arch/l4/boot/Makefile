@@ -20,7 +20,7 @@ vmlinuz$(VMLINUZ_SUFFIX): ldrImage FORCE
 l4linux$(VMLINUZ_SUFFIX): ldrImage FORCE
 	$(Q)ln -sf $< $@
 
-objects-y := ldr.o res.o image.o
+objects-y := launch.o ldr.o res.o image.o
 
 # maintenance targets such as clean do not read in the config,
 # as $(dot-config) does not work from herein, we check L4OBJ
@@ -44,7 +44,14 @@ KBUILD_CFLAGS   := $(L4_CFLAGS_MINIMAL)
 KBUILD_CFLAGS	+= $(L4INC) -I$(L4OBJ)/include/uclibc \
 		   -Wall -fno-strict-aliasing -O2 -pipe \
 		   -DARCH_$(L4_MK_ARCH) -g \
-		   -I$(obj) -DL4SYS_USE_UTCB_WRAP=1
+		   -I$(obj) -DL4SYS_USE_UTCB_WRAP=1 \
+		   -Wno-unused-parameter
+
+ifdef CONFIG_RETPOLINE
+ifneq ($(RETPOLINE_CFLAGS),)
+  KBUILD_CFLAGS += $(RETPOLINE_CFLAGS) -DRETPOLINE
+endif
+endif
 
 KBUILD_AFLAGS   += -DVMLINUX_IMAGE=\"$(obj)/Image\"
 
@@ -57,6 +64,11 @@ $(obj)/func_list.h: vmlinux
 	$(Q)perl -p -e 's/(.+?)\0/EF($$1)\n/g' $@.tmp > $@
 
 OBJS := $(addprefix $(obj)/,$(objects-y))
+ifdef CONFIG_X86
+ifdef CONFIG_RETPOLINE
+OBJS += arch/x86/lib/retpoline.o
+endif
+endif
 
 L4_EXT_LIBS := $(call L4_BID_PKG_CONFIG_CALL,$(L4OBJ),--libs --define-variable=libc_variant=libc,$(L4_REQUIRED_MODS))
 
@@ -83,7 +95,7 @@ ldrImage: $(OBJS)
 	@echo "  LD      $@"
 	$(Q)$(bid_link) $(LDFLAGS) -gc-sections -o $@ \
 	  -static $(L4_LIBDIRS) $(OBJS) $(servers-y) \
-	  --defsym __executable_start=$(LINKADDR-$(BITS)) \
+	  -Ttext-segment=$(LINKADDR-$(BITS)) \
 	  --defsym __L4_STACK_ADDR__=$(L4_BID_STACK_ADDR) \
 	  --defsym __L4_KIP_ADDR__=$(L4_BID_KIP_ADDR) \
           --defsym __l4sys_invoke_direct=$(L4_BID_KIP_ADDR)+$(L4_BID_KIP_OFFS_SYS_INVOKE) \

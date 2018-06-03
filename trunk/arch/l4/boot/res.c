@@ -1,12 +1,12 @@
+#undef __always_inline
 
 #include <string.h>
 #include <l4/sys/compiler.h>
 
-
-#ifdef ARCH_arm
-asm(
-	".global __l4_external_resolver\n"
+asm(    ".global __l4_external_resolver\n"
+	".type __l4_external_resolver, %function\n"
 	"__l4_external_resolver: \n"
+#ifdef ARCH_arm
 	"	stmdb  sp!, {r0 - r12, lr} \n" // 56 bytes onto the stack
 	"	ldr r0, [sp, #60] \n" // r0 is the jmptblentry
 	"	ldr r1, [sp, #56] \n" // r1 is the funcname pointer
@@ -15,11 +15,7 @@ asm(
 	"	ldmia sp!, {r0 - r12, lr}\n"
 	"	add sp, sp, #4 \n"
 	"	ldmia sp!, {pc} \n"
-   );
 #elif defined(ARCH_x86)
-asm(
-	".global __l4_external_resolver\n"
-	"__l4_external_resolver: \n"
 	"	pusha\n"
 	"	mov 0x24(%esp), %eax\n" // eax is the jmptblentry
 	"	mov 0x20(%esp), %edx\n" // edx is the symtab_ptr
@@ -28,11 +24,7 @@ asm(
 	"	mov %eax, 0x20(%esp) \n"
 	"	popa\n"
 	"	ret $4\n"
-   );
 #else
-asm(
-	".global __l4_external_resolver\n"
-	"__l4_external_resolver: \n"
 	"	push    %rcx\n"
 	"	push    %rdx\n"
 	"	push    %rbx\n"
@@ -69,8 +61,8 @@ asm(
 	"	pop     %rdx\n"
 	"	pop     %rcx\n"
 	"	ret     $8\n"
-   );
 #endif
+);
 
 
 #define EF(func) \

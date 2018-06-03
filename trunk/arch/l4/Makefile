@@ -265,6 +265,15 @@ KBUILD_CFLAGS += $(cfi) $(cfi-sigframe) $(cfi-sections) $(asinstr) $(avx_instr) 
 
 LDFLAGS := -m elf_$(UTS_MACHINE)
 
+#
+# The 64-bit kernel must be aligned to 2MB.  Pass -z max-page-size=0x200000 to
+# the linker to force 2MB page size regardless of the default page size used
+# by the linker.
+#
+ifdef CONFIG_X86_64
+LDFLAGS += $(call ld-option, -z max-page-size=0x200000)
+endif
+
 # Speed up the build
 KBUILD_CFLAGS += -pipe
 # Workaround for a gcc prelease that unfortunately was shipped in a suse release
@@ -274,12 +283,10 @@ KBUILD_CFLAGS += -fno-asynchronous-unwind-tables
 
 # Avoid indirect branches in kernel to deal with Spectre
 ifdef CONFIG_RETPOLINE
-    RETPOLINE_CFLAGS += $(call cc-option,-mindirect-branch=thunk-extern -mindirect-branch-register)
-    ifneq ($(RETPOLINE_CFLAGS),)
-        KBUILD_CFLAGS += $(RETPOLINE_CFLAGS) -DRETPOLINE
-    endif
+ifneq ($(RETPOLINE_CFLAGS),)
+  KBUILD_CFLAGS += $(RETPOLINE_CFLAGS) -DRETPOLINE
 endif
-
+endif
 endif
 
 ifeq ($(L4X_SRCARCH),arm)
@@ -365,9 +372,11 @@ ifeq ($(CONFIG_ARM_UNWIND),y)
 CFLAGS_ABI	+=-funwind-tables
 endif
 
+# Accept old syntax despite ".syntax unified"
+AFLAGS_NOWARN	:=$(call as-option,-Wa$(comma)-mno-warn-deprecated,-Wa$(comma)-W)
+
 ifeq ($(CONFIG_THUMB2_KERNEL),y)
 AFLAGS_AUTOIT	:=$(call as-option,-Wa$(comma)-mimplicit-it=always,-Wa$(comma)-mauto-it)
-AFLAGS_NOWARN	:=$(call as-option,-Wa$(comma)-mno-warn-deprecated,-Wa$(comma)-W)
 CFLAGS_ISA	:=-mthumb $(AFLAGS_AUTOIT) $(AFLAGS_NOWARN)
 AFLAGS_ISA	:=$(CFLAGS_ISA) -Wa$(comma)-mthumb
 # Work around buggy relocation from gas if requested:
@@ -375,7 +384,7 @@ ifeq ($(CONFIG_THUMB2_AVOID_R_ARM_THM_JUMP11),y)
 KBUILD_CFLAGS_MODULE	+=-fno-optimize-sibling-calls
 endif
 else
-CFLAGS_ISA	:=$(call cc-option,-marm,)
+CFLAGS_ISA	:=$(call cc-option,-marm,) $(AFLAGS_NOWARN)
 AFLAGS_ISA	:=$(CFLAGS_ISA)
 endif
 
@@ -473,20 +482,27 @@ ifeq ($(CONFIG_HAVE_FUNCTION_TRACER),y)
 KBUILD_CPPFLAGS += -I$(objtree)/arch/$(LINSRCARCH)/include/asm/trace
 endif
 
-KBUILD_CPPFLAGS += -I$(objtree)/arch/l4/include/asm/l4-arch \
-                   -I$(objtree)/arch/$(LINSRCARCH)/include/generated \
+# mix-in some more include paths
+LINUXINCLUDE := $(subst -I$(srctree)/arch/l4/include, \
+                        -I$(srctree)/arch/l4/include \
+			  -I$(objtree)/arch/l4/include/asm/l4-arch \
+                          -I$(srctree)/arch/$(LINSRCARCH)/include, \
+			$(LINUXINCLUDE))
+                        
+LINUXINCLUDE := $(subst -I$(srctree)/arch/$(SRCARCH)/include/uapi, \
+                        -I$(srctree)/arch/$(LINSRCARCH)/include/uapi, \
+                        $(LINUXINCLUDE))
+
+KBUILD_CPPFLAGS += -I$(objtree)/arch/$(LINSRCARCH)/include/generated \
                    -I$(objtree)/arch/$(LINSRCARCH)/include/generated/uapi \
                    $(if $(PLATFORMNAME),-I$(src)/arch/l4/include/asm/mach-$(LINSRCARCH)/$(PLATFORMNAME)) \
                    $(if $(PLATFORMNAME),-I$(src)/arch/l4/include/asm/plat-$(LINSRCARCH)/$(PLATFORMNAME)) \
-                   -I$(src)/arch/$(LINSRCARCH)/include \
                    $(if $(CONFIG_L4_ARCH_ARM),-I$(srctree)/arch/l4/arm-mach-l4/include) \
                    -I$(objtree)/arch/l4/include/asm/orig-arch \
                    -I$(objtree)/arch/l4/include \
-                   -I$(src)/arch/$(LINSRCARCH)/include/uapi \
                    $(L4INC) $(L4_EXT_CFLAGS) \
                    $(CPPFLAGS_SYSENTER-y) \
                    $(L4BID_CPPFLAGS_SYSCALLS-y)
-
 
 # for DICE
 KBUILD_CPPFLAGS	+= -DL4API_$(L4_MK_API)
@@ -684,4 +700,3 @@ define archhelp
   echo  '* dtbs          - Build device tree blobs for enabled boards'
   echo  '  dtbs_install  - Install dtbs to $(INSTALL_DTBS_PATH)'
 endef
-

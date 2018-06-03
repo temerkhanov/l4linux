@@ -45,6 +45,9 @@
 #define L4_EXTERNAL_FUNC_VARGS(func) L4_EXTERNAL_FUNC(func)
 
 #else
+
+#include <asm/nospec-branch.h>
+
 #ifdef CONFIG_X86_32
 #define PSTOR ".long"
 #define RAX_SETUP ""
@@ -70,9 +73,12 @@
 	    ".weak " __stringify(func) "                                \n" \
 	    ".type " __stringify(func) ", @function                     \n" \
 	    ".type " __stringify(func##_resolver) ", @function          \n" \
-	    __stringify(func) ":            " call_prolog "jmp *8b      \n" \
+	    __stringify(func) ":" call_prolog                               \
+	                          ANNOTATE_RETPOLINE_SAFE                   \
+	                          "jmp *8b      \n" \
 	    __stringify(func##_resolver) ": push $8b                    \n" \
             "                               push $7b                    \n" \
+	                                    ANNOTATE_RETPOLINE_SAFE         \
 	    "                               jmp *__l4_external_resolver \n" \
 	    ".previous                                                  \n" \
 	   )
