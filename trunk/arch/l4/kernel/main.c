@@ -1482,6 +1482,8 @@ void __init l4x_setup_memory(char *cmdl,
 	{
 		extern void * /*__initdata*/ vmalloc_min;
 		vmalloc_min = (void *)l4x_vmalloc_memory_start;
+
+		BUILD_BUG_ON(MODULES_VADDR > MODULES_END);
 	}
 #endif
 

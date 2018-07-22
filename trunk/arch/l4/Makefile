@@ -222,6 +222,10 @@ ifdef CONFIG_FUNCTION_GRAPH_TRACER
   endif
 endif
 
+ifndef CC_HAVE_ASM_GOTO
+  $(error Compiler lacks asm-goto support.)
+endif
+
 #
 # Jump labels need '-maccumulate-outgoing-args' for gcc < 4.5.2 to prevent a
 # GCC bug (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=46226).  There's no way
@@ -510,7 +514,7 @@ KBUILD_CPPFLAGS	+= -DL4API_$(L4_MK_API)
 KBUILD_CPPFLAGS += -DL4SYS_USE_UTCB_WRAP=1
 
 ifneq ($(CONFIG_L4_ARCH_ARM),)
-KBUILD_CPPFLAGS += -DTEXT_OFFSET=0x0200000
+KBUILD_CPPFLAGS += -DTEXT_OFFSET=0x3000000
 endif
 
 # Build the DT binary blobs if we have OF configured
@@ -640,6 +644,7 @@ chkl4conf:
 # M486 M586 M586TSC M586MMX: cmpxchg64 emulation uses cli
 
 DIS_OPTS-x86-32 := HPET_TIMER X86_X32
+DIS_OPTS-x86-64 := PAGE_TABLE_ISOLATION
 DIS_OPTS-arm-32 := PERF_EVENTS ARM_PATCH_PHYS_VIRT HIGHMEM
 DIS_OPTS := HIGHMEM4G HIGHMEM64G PCI_GOANY PCI_GOBIOS \
             X86_MCE X86_MCE MTRR PARAVIRT KEXEC MCA SOFTWARE_SUSPEND APM \

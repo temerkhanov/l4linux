@@ -28,7 +28,7 @@ obj-y			+= cpuid-deps.o
 obj-$(CONFIG_PROC_FS)	+= proc.o
 obj-$(CONFIG_X86_FEATURE_NAMES) += capflags.o powerflags.o
 
-obj-$(CONFIG_CPU_SUP_INTEL)		+= intel.o
+obj-$(CONFIG_CPU_SUP_INTEL)		+= intel.o intel_pconfig.o
 obj-$(CONFIG_CPU_SUP_AMD)		+= amd.o
 obj-$(CONFIG_CPU_SUP_CYRIX_32)		+= cyrix.o
 obj-$(CONFIG_CPU_SUP_CENTAUR)		+= centaur.o
@@ -77,7 +77,7 @@ $(call L4X_FILEREF, $(b), \
                     perf_event_intel_uncore_snb               \
                     perf_event_intel_uncore_snbep             \
                     perf_event_knc perf_event_msr             \
-                    perf_event_p4                             \
+                    perf_event_p4 intel_pconfig               \
                     perf_event_p6 perfctr-watchdog powerflags \
                     proc rdrand scattered topology transmeta  \
                     umc vmware aperfmperf cpuid-deps);

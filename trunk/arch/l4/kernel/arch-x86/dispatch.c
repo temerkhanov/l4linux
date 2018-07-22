@@ -320,7 +320,7 @@ static void l4x_dispatch_suspend(struct task_struct *p,
 
 /* entry/common.c */
 #ifdef CONFIG_X86_64
-void do_syscall_64(struct pt_regs *regs);
+void do_syscall_64(unsigned long nr, struct pt_regs *regs);
 #endif
 
 static inline void dispatch_system_call(struct task_struct *p,
@@ -377,7 +377,7 @@ static inline void dispatch_system_call(struct task_struct *p,
 
 
 #ifdef CONFIG_X86_64
-	do_syscall_64(regsp);
+	do_syscall_64(syscall, regsp);
 #else
 	do_syscall_32_irqs_on(regsp);
 #endif

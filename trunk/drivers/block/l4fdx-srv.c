@@ -10,6 +10,7 @@
 #include <linux/slab.h>
 #include <linux/blkdev.h>
 #include <linux/syscalls.h>
+#include "../../kernel/uid16.h"
 
 #include <linux/root_dev.h>
 
@@ -440,9 +441,9 @@ static int fn(void *d)
 	struct l4fdx_client *client = d;
 	int err;
 
-	err = sys_setregid(client->gid, client->gid);
-	err = sys_setreuid(client->uid, client->uid);
-	err = sys_setsid();
+	err = __sys_setregid(client->gid, client->gid);
+	err = __sys_setreuid(client->uid, client->uid);
+	err = ksys_setsid();
 
 	if (client->capname)
 		snprintf(current->comm, sizeof(current->comm),

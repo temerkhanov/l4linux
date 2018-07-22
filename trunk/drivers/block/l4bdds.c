@@ -197,7 +197,7 @@ static int __init l4bdds_init_one(int nr)
 	device[nr].gd->queue = device[nr].queue;
 	add_disk(device[nr].gd);
 
-	queue_flag_set_unlocked(QUEUE_FLAG_DAX, device[nr].queue);
+	blk_queue_flag_set(QUEUE_FLAG_DAX, device[nr].queue);
 	device[nr].dax_dev = alloc_dax(&device[nr], device[nr].gd->disk_name,
 	                               &l4bdds_dax_ops);
 	if (!device[nr].dax_dev)
