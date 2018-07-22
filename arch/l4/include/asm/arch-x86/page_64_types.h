@@ -38,32 +38,30 @@
  * what Xen requires.
  */
 #ifdef CONFIG_L4
-#define __PAGE_OFFSET_BASE	_AC(0x0000000000000000, UL)
-#define __PAGE_OFFSET           __PAGE_OFFSET_BASE
+#define __PAGE_OFFSET_BASE_L4	_AC(0x0000000000000000, UL)
+#define __PAGE_OFFSET           __PAGE_OFFSET_BASE_L4
 
 #define __START_KERNEL_map	_AC(0x0000000000200000, UL)
 #else /* L4 */
-#ifdef CONFIG_X86_5LEVEL
-#define __PAGE_OFFSET_BASE      _AC(0xff10000000000000, UL)
-#else
-#define __PAGE_OFFSET_BASE      _AC(0xffff880000000000, UL)
-#endif
+#define __PAGE_OFFSET_BASE_L5	_AC(0xff10000000000000, UL)
+#define __PAGE_OFFSET_BASE_L4	_AC(0xffff880000000000, UL)
 
-#ifdef CONFIG_RANDOMIZE_MEMORY
+#ifdef CONFIG_DYNAMIC_MEMORY_LAYOUT
 #define __PAGE_OFFSET           page_offset_base
 #else
-#define __PAGE_OFFSET           __PAGE_OFFSET_BASE
-#endif /* CONFIG_RANDOMIZE_MEMORY */
+#define __PAGE_OFFSET           __PAGE_OFFSET_BASE_L4
+#endif /* CONFIG_DYNAMIC_MEMORY_LAYOUT */
 
 #define __START_KERNEL_map	_AC(0xffffffff80000000, UL)
 #endif /* L4 */
 
 /* See Documentation/x86/x86_64/mm.txt for a description of the memory map. */
-#ifdef CONFIG_X86_5LEVEL
+
 #define __PHYSICAL_MASK_SHIFT	52
-#define __VIRTUAL_MASK_SHIFT	56
+
+#ifdef CONFIG_X86_5LEVEL
+#define __VIRTUAL_MASK_SHIFT	(pgtable_l5_enabled ? 56 : 47)
 #else
-#define __PHYSICAL_MASK_SHIFT	46
 #define __VIRTUAL_MASK_SHIFT	47
 #endif
 

@@ -470,7 +470,6 @@ static int l4x_handle_async_event(l4_umword_t label,
                                   l4_msgtag_t tag)
 {
 	struct l4x_srv_object *o = (struct l4x_srv_object *)(label & ~3UL);
-	printk("%s %d: label=%lx\n", __func__, __LINE__, label); 
 	return o->dispatch(o, label, u, &tag);
 }
 

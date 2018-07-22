@@ -8,7 +8,7 @@ static unsigned int l4x_io_apic_read(unsigned int apic, unsigned int reg)
         return ~0;
 }
 
-static void l4x_disable_io_apic(void)
+static void l4x_restore_boot_irq_mode(void)
 {}
 
 #endif /* __ASM_L4__L4X_X86__INIT_H__ */
