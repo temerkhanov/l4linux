@@ -17,7 +17,7 @@ KCOV_INSTRUMENT_perf_event.o := n
 nostackp := $(call cc-option, -fno-stack-protector)
 CFLAGS_common.o		:= $(nostackp)
 
-obj-y			:= intel_cacheinfo.o scattered.o topology.o
+obj-y			:= cacheinfo.o scattered.o topology.o
 obj-y			+= common.o
 obj-y			+= rdrand.o
 obj-y			+= match.o
@@ -65,7 +65,7 @@ include arch/l4/Makefile.lib
 
 $(call L4X_FILEREF, $(b), \
                     amd bugs bugs_64 centaur cyrix hypervisor \
-                    intel_cacheinfo match mshyperv perf_event \
+                    cacheinfo match mshyperv perf_event       \
                     perf_event_amd perf_event_amd_ibs         \
                     perf_event_amd_uncore perf_event_intel    \
                     perf_event_intel_bts perf_event_intel_cqm \

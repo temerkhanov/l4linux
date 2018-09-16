@@ -12,7 +12,7 @@ obj-$(CONFIG_L4)		+= proc-l4.o
 
 ifneq ($(CONFIG_MMU),y)
 obj-y				+= nommu.o
-obj-$(CONFIG_ARM_MPU)		+= pmsa-v7.o
+obj-$(CONFIG_ARM_MPU)		+= pmsa-v7.o pmsa-v8.o
 endif
 
 obj-$(CONFIG_ARM_PTDUMP_CORE)	+= dump.o

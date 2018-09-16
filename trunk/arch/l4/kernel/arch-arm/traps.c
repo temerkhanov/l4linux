@@ -442,6 +442,7 @@ asmlinkage void do_undefinstr(struct pt_regs *regs)
 	siginfo_t info;
 	void __user *pc;
 
+	clear_siginfo(&info);
 	pc = (void __user *)instruction_pointer(regs);
 
 	if (processor_mode(regs) == SVC_MODE) {
@@ -541,6 +542,7 @@ static int bad_syscall(int n, struct pt_regs *regs)
 {
 	siginfo_t info;
 
+	clear_siginfo(&info);
 	if ((current->personality & PER_MASK) != PER_LINUX) {
 		send_sig(SIGSEGV, current, 1);
 		return regs->ARM_r0;
@@ -608,6 +610,7 @@ asmlinkage int arm_syscall(int no, struct pt_regs *regs)
 {
 	siginfo_t info;
 
+	clear_siginfo(&info);
 	if ((no >> 16) != (__ARM_NR_BASE>> 16))
 		return bad_syscall(no, regs);
 
@@ -743,6 +746,8 @@ baddataabort(int code, unsigned long instr, struct pt_regs *regs)
 {
 	unsigned long addr = instruction_pointer(regs);
 	siginfo_t info;
+
+	clear_siginfo(&info);
 
 #ifdef CONFIG_DEBUG_USER
 	if (user_debug & UDBG_BADABORT) {

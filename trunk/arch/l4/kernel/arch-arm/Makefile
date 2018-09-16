@@ -32,6 +32,7 @@ else
 #obj-y		+= entry-armv.o
 endif
 
+obj-$(CONFIG_MMU)		+= bugs.o
 obj-$(CONFIG_CPU_IDLE)		+= cpuidle.o
 obj-$(CONFIG_ISA_DMA_API)	+= dma.o
 #obj-$(CONFIG_FIQ)		+= fiq.o fiqasm.o
@@ -111,7 +112,8 @@ $(call L4X_FILEREF, ../../../arm/kernel,                  \
        devtree dma elf hyp-stub io irq kgdb module        \
        opcodes patch return_address sigreturn_codes       \
        stacktrace swp_emulate sys_oabi-compat time        \
-       topology unwind entry-ftrace ftrace insn)
+       topology unwind entry-ftrace ftrace insn bugs      \
+       module-plts)
 
 KBUILD_CPPFLAGS	+= -I$(srctree)/arch/arm/kernel
 
