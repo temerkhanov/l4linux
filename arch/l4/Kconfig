@@ -407,10 +407,6 @@ config L4_USE_L4SHMC
 config L4_CLK_NOOP
 	bool
 
-config LINSRCARCH
-	string
-	option env="LINSRCARCH"
-
 # some delimiter (for .config)
 comment ""
-source "arch/l4/Kconfig.$LINSRCARCH"
+source "arch/l4/Kconfig.$(LINSRCARCH)"

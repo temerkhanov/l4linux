@@ -14,7 +14,7 @@ ifeq ($(LINSRCARCH),arm)
 L4API		:= f
 L4X_SRCARCH	:= arm
 
-CHECKFLAGS	:= -D__arm__ -m32
+CHECKFLAGS	:= -D__arm__
 
 L4_MK_ARCH	:= arm
 OBJCOPYARCH	:= elf32-littlearm
@@ -135,7 +135,7 @@ ifeq ($(CONFIG_X86_32),y)
 else
         BITS := 64
         UTS_MACHINE := x86_64
-        CHECKFLAGS += -D__x86_64__ -m64
+        CHECKFLAGS += -D__x86_64__
 
         biarch := -m64
         KBUILD_AFLAGS += -m64
@@ -367,7 +367,7 @@ tune-$(CONFIG_CPU_V6K)		=$(call cc-option,-mtune=arm1136j-s,-mtune=strongarm)
 tune-y := $(tune-y)
 
 ifeq ($(CONFIG_AEABI),y)
-CFLAGS_ABI	:=-mabi=aapcs-linux -mno-thumb-interwork -mfpu=vfp
+CFLAGS_ABI	:=-mabi=aapcs-linux -mfpu=vfp
 else
 CFLAGS_ABI	:=$(call cc-option,-mapcs-32,-mabi=apcs-gnu) $(call cc-option,-mno-thumb-interwork,)
 endif
@@ -600,9 +600,6 @@ ifeq ($(L4X_SRCARCH),arm)
 	$(Q)rm -f .tmp.mach-types.list .tmp.mach-types.h
 endif
 	$(Q)mkdir -p arch/$(L4X_SRCARCH)/lib
-ifeq ($(CONFIG_KEXEC_FILE),y)
-	$(Q)$(MAKE) $(build)=arch/x86/purgatory arch/x86/purgatory/kexec-purgatory.c
-endif
 
 endif # .config available
 else # no archprepare when configuring the kernel
@@ -616,7 +613,6 @@ archclean:
 	$(Q)rm -rf $(objtree)/arch/x86_64
 	$(Q)$(MAKE) $(clean)=$(boot)
 	$(Q)$(MAKE) $(clean)=arch/x86/tools
-	$(Q)$(MAKE) $(clean)=arch/x86/purgatory
 
 ifeq ($(L4X_SRCARCH),x86)
 # Syscall table generation
@@ -645,7 +641,8 @@ chkl4conf:
 
 DIS_OPTS-x86-32 := HPET_TIMER X86_X32
 DIS_OPTS-x86-64 := PAGE_TABLE_ISOLATION
-DIS_OPTS-arm-32 := PERF_EVENTS ARM_PATCH_PHYS_VIRT HIGHMEM
+DIS_OPTS-arm-32 := PERF_EVENTS ARM_PATCH_PHYS_VIRT HIGHMEM \
+                   HARDEN_BRANCH_PREDICTOR
 DIS_OPTS := HIGHMEM4G HIGHMEM64G PCI_GOANY PCI_GOBIOS \
             X86_MCE X86_MCE MTRR PARAVIRT KEXEC MCA SOFTWARE_SUSPEND APM \
 	    VM86 X86_DS X86_PTRACE_BTS HT_IRQ DMI \

@@ -2514,13 +2514,13 @@ static void l4x_x86_register_ports(l4io_resource_t *res)
 
 }
 
-static void l4x_x86_get_wallclock_noop(struct timespec *ts)
+static void l4x_x86_get_wallclock_noop(struct timespec64 *ts)
 {
 	ts->tv_sec = 0;
 	ts->tv_nsec = 0;
 }
 
-static int l4x_x86_set_wallclock_noop(const struct timespec *ts)
+static int l4x_x86_set_wallclock_noop(const struct timespec64 *ts)
 {
 	return -EINVAL;
 }
