@@ -316,7 +316,9 @@ static void do_vcpu_irq(l4_vcpu_state_t *v)
 #else
 #error What arch?
 #endif
+	trace_hardirqs_off();
 	l4x_vcpu_handle_irq(v, &regs);
+	trace_hardirqs_on();
 }
 #endif
 
@@ -362,7 +364,7 @@ void l4x_global_halt(void)
 	                      do_vcpu_irq, l4x_srv_setup_recv_wrap);
 #ifdef CONFIG_X86
 	// on x86, interrupts are enabled after hlt
-	l4x_global_sti();
+	local_irq_enable();
 #endif
 }
 EXPORT_SYMBOL(l4x_global_halt);

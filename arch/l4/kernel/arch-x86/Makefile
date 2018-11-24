@@ -92,14 +92,14 @@ obj-y				+= apic/
 obj-$(CONFIG_DYNAMIC_FTRACE)	+= ftrace.o
 obj-$(CONFIG_LIVEPATCH)	+= livepatch.o
 obj-$(CONFIG_FUNCTION_TRACER)	+= ftrace_$(BITS).o
-#obj-$(CONFIG_FUNCTION_GRAPH_TRACER) += ftrace.o
-#obj-$(CONFIG_FTRACE_SYSCALLS)	+= ftrace.o
+obj-$(CONFIG_FUNCTION_GRAPH_TRACER) += ftrace.o
+obj-$(CONFIG_FTRACE_SYSCALLS)	+= ftrace.o
 obj-$(CONFIG_X86_TSC)		+= trace_clock.o
 obj-$(CONFIG_KEXEC_CORE)	+= machine_kexec_$(BITS).o
 obj-$(CONFIG_KEXEC_CORE)	+= relocate_kernel_$(BITS).o crash.o
 obj-$(CONFIG_KEXEC_FILE)	+= kexec-bzimage64.o
 obj-$(CONFIG_CRASH_DUMP)	+= crash_dump_$(BITS).o
-obj-y				+= kprobes/
+obj-y				+= ../../../x86/kernel/kprobes/
 obj-$(CONFIG_MODULES)		+= module.o
 obj-$(CONFIG_DOUBLEFAULT)	+= doublefault.o
 obj-$(CONFIG_KGDB)		+= kgdb.o
@@ -172,7 +172,8 @@ $(call L4X_FILEREF, ../../../x86/kernel,                         \
        syscall_64 sysfb test_rodata time tls topology            \
        trace_clock tsc_msr tsc_sync                              \
        vread_tsc_64 vsmp_64 vsyscall_emu_64 vsyscall_gtod        \
-       ftrace mcount_64 tracepoint unwind_frame unwind_guess     \
+       ftrace ftrace_32 ftrace_64                                \
+       mcount_64 tracepoint unwind_frame unwind_guess            \
        unwind_orc uprobes)
 
 # syscall_table_32.S
