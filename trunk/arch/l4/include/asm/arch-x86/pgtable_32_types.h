@@ -54,8 +54,13 @@ extern bool __vmalloc_start_set; /* set once high_memory is set */
 	((FIXADDR_TOT_START - PAGE_SIZE * (CPU_ENTRY_AREA_PAGES + 1))   \
 	 & PMD_MASK)
 
-#define PKMAP_BASE		\
+#define LDT_BASE_ADDR		\
 	((CPU_ENTRY_AREA_BASE - PAGE_SIZE) & PMD_MASK)
+
+#define LDT_END_ADDR		(LDT_BASE_ADDR + PMD_SIZE)
+
+#define PKMAP_BASE		\
+	((LDT_BASE_ADDR - PAGE_SIZE) & PMD_MASK)
 
 #ifdef CONFIG_L4
 #define VMALLOC_END	(l4x_vmalloc_memory_start + __VMALLOC_RESERVE)
@@ -63,7 +68,7 @@ extern bool __vmalloc_start_set; /* set once high_memory is set */
 #ifdef CONFIG_HIGHMEM
 # define VMALLOC_END	(PKMAP_BASE - 2 * PAGE_SIZE)
 #else
-# define VMALLOC_END	(CPU_ENTRY_AREA_BASE - 2 * PAGE_SIZE)
+# define VMALLOC_END	(LDT_BASE_ADDR - 2 * PAGE_SIZE)
 #endif
 #endif /* L4 */
 

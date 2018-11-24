@@ -376,6 +376,7 @@ static int create_vbus_device(struct device *parent,
 	for (i = 0; i < devinfo.num_resources; ++i) {
 		struct l4x_vbus_resource *vbus_res;
 		l4vbus_resource_t res;
+		size_t sz = sizeof(res.id);
 		char *n;
 		err = L4XV_FN_i(l4vbus_get_resource(vbus, handle, i, &res));
 		if (err < 0) {
@@ -390,9 +391,9 @@ static int create_vbus_device(struct device *parent,
 			break;
 		}
 
-		n = kmalloc(sizeof(res.id) + 1, GFP_KERNEL);
+		n = kmalloc(sz + 1, GFP_KERNEL);
 		if (n) {
-			strncpy(n, (char *)&res.id, sizeof(res.id));
+			strncpy(n, (char *)&res.id, sz);
 			n[sizeof(res.id)] = '\0';
 			vbus_res->res.name = n;
 		}

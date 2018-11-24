@@ -55,6 +55,9 @@ endif
 
 KBUILD_AFLAGS   += -DVMLINUX_IMAGE=\"$(obj)/Image\"
 
+# Disable UBSAN for the loader
+UBSAN_SANITIZE := n
+
 $(obj)/res.o: $(obj)/func_list.h
 
 $(obj)/image.o: $(obj)/Image

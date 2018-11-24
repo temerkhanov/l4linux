@@ -31,6 +31,7 @@
 #include <asm/server/server.h>
 #include <asm/l4x/utcb.h>
 #include <asm/l4x/cachetypes.h>
+#include <linux/context_tracking.h>
 
 #ifndef CONFIG_L4_VCPU
 DEFINE_PER_CPU(int, l4x_idle_running);
@@ -995,6 +996,7 @@ restart:
 
 	if (likely(vcpu->saved_state & L4_VCPU_F_USER_MODE)) {
 		l4x_pte_check_empty(p->active_mm);
+		user_enter();
 create_task:
 		if (unlikely(p->mm && l4_is_invalid_cap(p->mm->context.task))) {
 			l4_cap_idx_t c = l4x_user_task_create();
@@ -1054,6 +1056,8 @@ create_task:
 	}
 
 	while (1) {
+		if (vcpu->saved_state & L4_VCPU_F_IRQ)
+			trace_hardirqs_on();
 #ifdef CONFIG_L4_SERVER
 		l4x_srv_setup_recv(utcb);
 #endif
@@ -1063,6 +1067,7 @@ create_task:
 		tag = l4_thread_vcpu_resume_commit_u(L4_INVALID_CAP, tag, utcb);
 
 		vcpu->state = 0;
+		trace_hardirqs_off();
 
 		if (l4_ipc_error(tag, utcb) == L4_IPC_SEMAPFAILED) {
 			l4_task_unmap(L4RE_THIS_TASK_CAP, (l4_fpage_t)fp2, L4_FP_OTHER_SPACES);
@@ -1181,6 +1186,8 @@ void l4x_vcpu_entry(l4_vcpu_state_t *vcpu)
 
 	l4x_vcpu_entry_sanity(vcpu);
 
+	trace_hardirqs_off();
+
 	if (unlikely(!(vcpu->saved_state & L4_VCPU_F_USER_MODE))) {
 		l4x_vcpu_entry_kern(vcpu);
 		/* Won't come back */
@@ -1194,6 +1201,7 @@ void l4x_vcpu_entry(l4_vcpu_state_t *vcpu)
 
 	vcpu_to_ptregs_user(vcpu, regsp);
 	vcpu_to_thread_struct(vcpu, t);
+	user_exit();
 
 	if (l4vcpu_is_irq_entry(vcpu)) {
 		l4x_vcpu_handle_irq(vcpu, regsp);

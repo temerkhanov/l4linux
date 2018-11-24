@@ -581,13 +581,8 @@ vector_addrexcptn:
 #endif /* L4 */
 
 	.data
+	.align	2
 
 	.globl	cr_alignment
 cr_alignment:
 	.space	4
-
-#ifdef CONFIG_MULTI_IRQ_HANDLER
-	.globl	handle_arch_irq
-handle_arch_irq:
-	.space	4
-#endif

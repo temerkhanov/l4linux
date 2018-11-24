@@ -259,7 +259,7 @@ static const char *required_kernel_features[] =
   {
   };
 
-static void l4x_configuration_sanity_check(const char *cmdline)
+static void __ref l4x_configuration_sanity_check(const char *cmdline)
 {
 	int i;
 
@@ -303,13 +303,13 @@ static void l4x_configuration_sanity_check(const char *cmdline)
 #endif
 }
 #else
-static void l4x_configuration_sanity_check(const char *cmdline)
+static void __ref l4x_configuration_sanity_check(const char *cmdline)
 {
 	LOG_printf("Configuration checks disabled, you know what you're doing.\n");
 }
 #endif
 
-static int l4x_check_setup(const char *cmdline)
+static int __ref l4x_check_setup(const char *cmdline)
 {
 #ifdef CONFIG_ARM
 	if (!l4util_kip_kernel_has_feature(l4lx_kinfo, "armv6plus")) {
@@ -3198,17 +3198,14 @@ static int l4x_handle_msr(l4_exc_regs_t *exc)
 			case MSR_PPERF:
 			case MSR_IA32_VMX_PROCBASED_CTLS:
 			case MSR_RAPL_POWER_UNIT:
+			case MSR_AMD64_OSVW_ID_LENGTH:
+			case MSR_AMD64_OSVW_STATUS:
+			case MSR_EFER:
 				exc->RN(ax) = exc->RN(dx) = 0;
 				break;
 			case MSR_K7_CLK_CTL:
+				exc->RN(dx) = 0;
 				exc->RN(ax) = 0x20000000;
-				break;
-			case MSR_AMD64_OSVW_ID_LENGTH:
-			case MSR_AMD64_OSVW_STATUS:
-				exc->RN(ax) = 0;
-				break;
-			case MSR_EFER:
-				exc->RN(ax) = 0;
 				break;
 			default:
 				LOG_printf("WARNING: Unknown rdmsr: "

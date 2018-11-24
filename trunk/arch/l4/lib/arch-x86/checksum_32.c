@@ -105,6 +105,7 @@ asmlinkage __wsum csum_partial(const void *buff, int len, __wsum sum) {
 	     : "bx", "dx");
      return(sum);
 }
+EXPORT_SYMBOL(csum_partial);
 
 /*
  * copy from ds while checksumming, otherwise like csum_partial
@@ -201,3 +202,4 @@ __wsum csum_partial_copy(const void *src, void *dst,
 	     : "bx", "dx" );
      return(sum);
 }
+EXPORT_SYMBOL(csum_partial_copy);
